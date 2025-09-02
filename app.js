@@ -1231,6 +1231,33 @@ function loadOpenCV(button){
 // OpenCV operations
 AppUI.prototype._sourceCanvas = function(){ const p=this.state.page; if(!p) return null; if(p.cvCanvas) return p.cvCanvas; const c=document.createElement('canvas'); c.width=p.bitmap.width; c.height=p.bitmap.height; c.getContext('2d').drawImage(p.bitmap,0,0); return c };
 
+ DevShgOpenCv
+// Graph build/trace helpers (run in worker)
+AppUI.prototype._cvEnsureGraphBuilt = async function(page){
+  const p = page||this.state.page; if(!p) return false;
+  if(!(window.cvWorker && window.cvWorkerReady)) return false;
+  const src = p.processedCanvas || p.cvCanvas || this._sourceCanvas();
+  const c = src; if(!c) return false; const ctx=c.getContext('2d'); const img=ctx.getImageData(0,0,c.width,c.height);
+  const stamp = `${c.width}x${c.height}:${(p.processedCanvas?1:0)}:${(p.cvCanvas?1:0)}:${p.enhance.brightness},${p.enhance.contrast},${p.enhance.threshold},${p.enhance.sharpen},${p.enhance.invert?1:0},${p.enhance.grayscale?1:0}`;
+  if(p._graphStamp === stamp && p._graphReady){ return true }
+  return new Promise((resolve)=>{
+    const w=window.cvWorker; const onMsg=(ev)=>{ const d=ev.data||{}; if(d.type==='buildGraph:result' && d.id===p.id){ w.removeEventListener('message', onMsg); p._graphReady=true; p._graphStamp=stamp; resolve(true) } };
+    w.addEventListener('message', onMsg);
+    w.postMessage({ type:'buildGraph', id:p.id, image:{ data:img.data.buffer, width:c.width, height:c.height } }, [img.data.buffer]);
+  });
+}
+
+AppUI.prototype._cvTracePath = async function(page, x, y){
+  const p=page||this.state.page; if(!p) return null; if(!(window.cvWorker && window.cvWorkerReady)) return null;
+  return new Promise((resolve)=>{
+    const w=window.cvWorker; const onMsg=(ev)=>{ const d=ev.data||{}; if(d.type==='tracePath:result' && d.id===p.id){ w.removeEventListener('message', onMsg); resolve(d.path||null) } };
+    w.addEventListener('message', onMsg);
+    w.postMessage({ type:'tracePath', id:p.id, click:{x,y}, opts:{ stopAt: !!(this.hlStop && this.hlStop.checked) } });
+  });
+}
+
+
+ main
   AppUI.prototype._cvDeskew = function(){
   const p=this.state.page; if(!p) return; const c=this._sourceCanvas(); if(!c) return;
   const ctx=c.getContext('2d', { willReadFrequently:true }); const img=ctx.getImageData(0,0,c.width,c.height);
