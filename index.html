@@ -75,17 +75,13 @@
         <div class="muted">First time uses network to load OpenCV. Then cached for offline.</div>
       </div>
 
-      <div class="panel">
+            <div class="panel">
         <h3>Highlight</h3>
-        <div class="row key-val"><div class="key">Thickness</div><div class="value"><input id="hl-width" type="range" min="1" max="40" step="1" value="6"></div></div>
-<<<<<<< HEAD
+        <div class="row key-val"><div class="key">Thickness</div><div class="val"><input id="hl-width" type="range" min="1" max="40" step="1" value="6"></div></div>
+        <div class="row key-val"><div class="key">Transparency</div><div class="val"><input id="hl-alpha" type="range" min="0" max="100" step="1" value="0"></div></div>
         <div class="row key-val"><div class="key">Color</div><div class="val"><input id="hl-color" type="color" value="#ffd166"></div></div>
-    
-=======
->>>>>>> parent of c41bcfe (1)
         <div class="row"><label><input id="hl-stop" type="checkbox"> Stop at junctions/symbols</label></div>
-      </div>
-      <div class="panel">
+      </div><div class="panel">
         <h3>Layers</h3>
         <div class="layers">
           <div id="layers-list"></div>
@@ -135,7 +131,7 @@
     <textarea id="debug-memo" spellcheck="false" wrap="off" placeholder="Debug output will appear here..."></textarea>
   </div>
 
-  <script defer src="app.js?v=3" onerror="(function(){try{var t=document.getElementById('toast'); if(t){t.className='toast show error'; t.textContent='Failed to load app.js';} var d=document.getElementById('debug-panel'); d && d.classList.remove('hidden');}catch(e){}})()"></script>
+  <script defer src="app.js?v=5" onerror="(function(){try{var t=document.getElementById('toast'); if(t){t.className='toast show error'; t.textContent='Failed to load app.js';} var d=document.getElementById('debug-panel'); d && d.classList.remove('hidden');}catch(e){}})()"></script>
   <script>
     if('serviceWorker' in navigator && !location.search.includes('nosw')){
       window.addEventListener('load', ()=>{
