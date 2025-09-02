@@ -198,6 +198,11 @@ class Viewer extends Emitter {
     const ctx=this.octx; ctx.save();
     const color=a.props?.color||'#ffd166';
     ctx.strokeStyle=color; ctx.lineWidth=a.props?.width||4; ctx.lineCap='round';
+    { // apply UI alpha (Transparency slider is 0..100, where 0 = opaque)
+      const t = +(this.hlAlpha?.value||0);
+      const alpha = Math.max(0, Math.min(1, 1 - (t/100)));
+      ctx.globalAlpha = alpha;
+    }
     ctx.shadowColor=color; ctx.shadowBlur=8;
     const pts=a.points||[]; if(pts.length<2){ ctx.restore(); return }
     ctx.beginPath();
