@@ -1100,7 +1100,7 @@ AppUI.prototype._cvTracePath = async function(page, x, y){
   return new Promise((resolve)=>{
     const w=window.cvWorker; const onMsg=(ev)=>{ const d=ev.data||{}; if(d.type==='tracePath:result' && d.id===p.id){ w.removeEventListener('message', onMsg); resolve(d.path||null) } };
     w.addEventListener('message', onMsg);
-    w.postMessage({ type:'tracePath', id:p.id, click:{x,y} });
+    w.postMessage({ type:'tracePath', id:p.id, click:{x,y}, opts:{ stopAt: !!(this.hlStop && this.hlStop.checked) } });
   });
 }
 
