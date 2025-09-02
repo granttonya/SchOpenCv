@@ -38,11 +38,10 @@
 
     <aside class="left">
       <div class="panel">
-        <h3 id="pages-heading">Pages</h3>
+        <h3>Pages</h3>
         <div class="muted">Drag & drop images, or use Open.</div>
       </div>
-      <h4 id="thumbs-label" class="visually-hidden">Thumbnails</h4>
-      <div class="thumbs" role="region" aria-labelledby="thumbs-label"></div>
+      <div class="thumbs" aria-label="Thumbnails"></div>
     </aside>
 
     <main class="main">
@@ -53,17 +52,17 @@
     <aside class="right">
       <div class="panel">
         <h3>Enhance</h3>
-        <div class="row"><label class="key" for="enh-bright">Brightness</label><input id="enh-bright" type="range" min="-100" max="100" value="0"></div>
-        <div class="row"><label class="key" for="enh-contrast">Contrast</label><input id="enh-contrast" type="range" min="-100" max="100" value="0"></div>
-        <div class="row"><label class="key" for="enh-threshold">Threshold</label><input id="enh-threshold" type="range" min="0" max="100" value="0"></div>
-        <div class="row"><label class="key" for="enh-sharpen">Sharpen</label><input id="enh-sharpen" type="range" min="0" max="100" value="0"></div>
+        <div class="row"><label class="key">Brightness</label><input id="enh-bright" type="range" min="-100" max="100" value="0"></div>
+        <div class="row"><label class="key">Contrast</label><input id="enh-contrast" type="range" min="-100" max="100" value="0"></div>
+        <div class="row"><label class="key">Threshold</label><input id="enh-threshold" type="range" min="0" max="100" value="0"></div>
+        <div class="row"><label class="key">Sharpen</label><input id="enh-sharpen" type="range" min="0" max="100" value="0"></div>
         <div class="row"><label><input id="enh-gray" type="checkbox"> Grayscale</label></div>
         <div class="row"><label><input id="enh-invert" type="checkbox"> Invert</label></div>
       </div>
       <div class="panel">
         <h3>Scale</h3>
-        <div class="row key-val"><label class="key" for="unit">Units</label><div class="value"><select id="unit" name="unit"><option value="in">inches</option><option value="cm">cm</option><option value="mm">mm</option></select></div></div>
-        <div class="row key-val"><label class="key" for="ppu">Pixels/Unit</label><div class="value"><input id="ppu" name="pixels-per-unit" type="number" min="0.0001" step="0.01" value="10"></div></div>
+        <div class="row key-val"><div class="key">Units</div><div class="value"><select id="unit"><option value="in">inches</option><option value="cm">cm</option><option value="mm">mm</option></select></div></div>
+        <div class="row key-val"><div class="key">Pixels/Unit</div><div class="value"><input id="ppu" type="number" min="0.0001" step="0.01" value="10"></div></div>
         <div class="muted">Use Measure tool to read distances. Adjust Pixels/Unit to calibrate to known reference.</div>
       </div>
       <div class="panel">
@@ -74,16 +73,14 @@
         <div class="row"><button id="cv-adapt" class="btn">Adaptive Threshold</button></div>
         <div class="row"><button id="cv-reset" class="btn warn">Reset CV</button></div>
         <div class="muted">First time uses network to load OpenCV. Then cached for offline.</div>
-        <div class="row"><label><input id="cv-hl-fallback" type="checkbox"> Use OpenCV for Highlight fallback</label></div>
       </div>
 
       <div class="panel">
         <h3>Highlight</h3>
-        <div class="row key-val"><label class="key" for="hl-width">Thickness</label><div class="value"><input id="hl-width" type="range" min="1" max="40" step="1" value="6"></div></div>
-        <div class="row"><label><input id="hl-stop" type="checkbox" checked> Stop at junctions/symbols</label></div>
-        <div class="row key-val"><label class="key" for="hl-junc">Junction Sen</label><div class="value"><input id="hl-junc" type="range" min="0" max="100" step="1" value="60"></div></div>
-        <div class="row key-val"><label class="key" for="hl-extend">Whole line</label><div class="value"><input id="hl-extend" type="range" min="0" max="100" step="1" value="50"></div></div>
-        <div class="row"><label><input id="hl-new" type="checkbox"> Use New (straight-segment) highlighter</label></div>
+        <div class="row key-val"><div class="key">Thickness</div><div class="value"><input id="hl-width" type="range" min="1" max="40" step="1" value="6"></div></div>
+        <div class="row key-val"><div class="key">Transparency</div><div class="val"><input id="hl-alpha" type="range" min="0" max="100" step="1" value="0"></div></div>
+    
+        <div class="row"><label><input id="hl-stop" type="checkbox"> Stop at junctions/symbols</label></div>
       </div>
       <div class="panel">
         <h3>Layers</h3>
@@ -94,7 +91,7 @@
             <button id="layer-rename" class="btn">Rename</button>
             <button id="layer-delete" class="btn warn">Delete</button>
           </div>
-          <div class="row key-val"><label class="key" for="layer-active">Active</label><div class="value"><select id="layer-active" name="active-layer"></select></div></div>
+          <div class="row key-val"><div class="key">Active</div><div class="value"><select id="layer-active"></select></div></div>
         </div>
       </div>
       <div class="panel">
@@ -110,8 +107,8 @@
     </div>
   </div>
 
-  <div class="help" role="dialog" aria-modal="false" aria-labelledby="help-title">
-    <h3 id="help-title">Shortcuts & Tips</h3>
+  <div class="help" role="dialog" aria-modal="false">
+    <h3>Shortcuts & Tips</h3>
     <div>
       - Ctrl+O: Open images; Ctrl+S: Export project<br>
       - + / -: Zoom; 0: Fit to view<br>
@@ -124,20 +121,18 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <div id="debug-panel" class="debug-panel" role="region" aria-labelledby="debug-panel-title">
+  <div id="debug-panel" class="debug-panel" aria-label="Debug Panel">
     <div class="debug-head">
-      <div id="debug-panel-title">Debug Memo</div>
+      <div>Debug Memo</div>
       <div class="debug-actions">
         <button id="debug-copy" class="btn">Copy</button>
         <button id="debug-clear" class="btn">Clear</button>
-        <button id="debug-sw-off" class="btn warn" title="Unregister Service Worker and clear caches">Disable SW</button>
       </div>
     </div>
     <textarea id="debug-memo" spellcheck="false" wrap="off" placeholder="Debug output will appear here..."></textarea>
   </div>
 
-  <script>try{localStorage.setItem("debugPanel","1")}catch(e){}</script>
-<script defer src="app.js?v=6" onerror="(function(){try{var t=document.getElementById('toast'); if(t){t.className='toast show error'; t.textContent='Failed to load app.js';} var d=document.getElementById('debug-panel'); d && d.classList.remove('hidden');}catch(e){}})()"></script>
+  <script defer src="app.js?v=3" onerror="(function(){try{var t=document.getElementById('toast'); if(t){t.className='toast show error'; t.textContent='Failed to load app.js';} var d=document.getElementById('debug-panel'); d && d.classList.remove('hidden');}catch(e){}})()"></script>
   <script>
     if('serviceWorker' in navigator && !location.search.includes('nosw')){
       window.addEventListener('load', ()=>{
