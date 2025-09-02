@@ -32,6 +32,9 @@ const uuid = () => {
   });
 };
 
+// Expose a simple build/version marker to verify cache updates in logs
+try{ window.APP_JS_VERSION = 6 }catch(_){ }
+
 class Emitter {
   constructor(){this.map=new Map()}
   on(t,fn){const a=this.map.get(t)||[];a.push(fn);this.map.set(t,a);return()=>this.off(t,fn)}
@@ -97,8 +100,23 @@ class Viewer extends Emitter {
     this.renderPending = false;
     this.fitWhenReady = true;
     this.log = (window.DEBUG_MEMO_LOG)||(()=>{});
+    this.selectedAnnId = null; // for drawing selection handles
     this._initEvents();
     this.resize();
+  }
+  
+  // Utility to expose an easy SW disable for debugging deployments
+  static disableServiceWorker(){
+    try{
+      const tasks = [];
+      if('serviceWorker' in navigator){
+        tasks.push(navigator.serviceWorker.getRegistrations().then(rs=>Promise.all(rs.map(r=>r.unregister()))));
+      }
+      if('caches' in window){
+        tasks.push(caches.keys().then(keys=>Promise.all(keys.map(k=>caches.delete(k)))));
+      }
+      return Promise.all(tasks);
+    }catch(e){ return Promise.reject(e) }
   }
   resize(){
     const r = this.wrap.getBoundingClientRect();
@@ -170,6 +188,7 @@ class Viewer extends Emitter {
         case 'text': this._drawText(a); break;
         case 'measure': this._drawMeasure(a); break;
         case 'highlight': this._drawHighlight(a); break;
+        case 'highlightPath': this._drawHighlightPath(a); break;
       }
     }
     ctx.restore();
@@ -199,11 +218,23 @@ class Viewer extends Emitter {
     const color=a.props?.color||'#ffd166';
     ctx.strokeStyle=color; ctx.lineWidth=a.props?.width||4; ctx.lineCap='round';
     ctx.shadowColor=color; ctx.shadowBlur=8;
-    const pts=a.points||[]; if(pts.length<2){ ctx.restore(); return }
-    ctx.beginPath();
-    const p0=this._p(pts[0]); ctx.moveTo(p0.x,p0.y);
-    for(let i=1;i<pts.length;i++){ const p=this._p(pts[i]); ctx.lineTo(p.x,p.y) }
-    ctx.stroke();
+    const p1=this._p(a.points[0]), p2=this._p(a.points[1]);
+    ctx.beginPath(); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.stroke();
+    // draw selection handles if selected
+    if(this.selectedAnnId && this.selectedAnnId===a.id){
+      ctx.shadowBlur=0; ctx.fillStyle='#fff'; ctx.strokeStyle='#0009';
+      const r=5;
+      ctx.beginPath(); ctx.arc(p1.x,p1.y,r,0,Math.PI*2); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.arc(p2.x,p2.y,r,0,Math.PI*2); ctx.fill(); ctx.stroke();
+    }
+    ctx.restore();
+  }
+  _drawHighlightPath(a){
+    const ctx=this.octx; ctx.save();
+    const color=a.props?.color||'#ffd166'; const w=a.props?.width||6;
+    ctx.strokeStyle=color; ctx.lineWidth=w; ctx.lineCap='round'; ctx.lineJoin='round';
+    ctx.shadowColor=color; ctx.shadowBlur=8;
+    const pts=a.points||[]; if(pts.length>=2){ ctx.beginPath(); const p0=this._p(pts[0]); ctx.moveTo(p0.x,p0.y); for(let i=1;i<pts.length;i++){ const p=this._p(pts[i]); ctx.lineTo(p.x,p.y) } ctx.stroke(); }
     ctx.restore();
   }
   _drawMeasure(a){
@@ -359,7 +390,7 @@ async function fileToBitmap(file){
 function ensureUTIF(){
   return new Promise((resolve, reject)=>{
     if(window.UTIF){ resolve(window.UTIF); return }
-    const s=document.createElement('script'); s.src='https://unpkg.com/utif@3.1.0/UTIF.min.js'; s.async=true;
+    const s=document.createElement('script'); s.src='vendor/UTIF.min.js'; s.async=true;
     s.onload=()=>window.UTIF?resolve(window.UTIF):reject(new Error('UTIF not available'));
     s.onerror=()=>reject(new Error('Failed to load UTIF'));
     document.head.appendChild(s);
@@ -401,8 +432,17 @@ class AppUI {
     this.fileInput=$$('#file-input');
     const setTool = t=>{ this.tool=t; this.viewer.shouldPan = ()=> this.tool==='pan'; this._syncToolButtons() };
     const v=this.viewer;
-    // Open is a <label for="file-input"> for broad browser support; keep a JS fallback too.
-    this.openBtn.addEventListener('click', ()=> { try{ this.fileInput.showPicker?.() }catch(_){} });
+    // Open is a <label for="file-input"> for broad browser support; keep a robust JS fallback too.
+    this.openBtn.addEventListener('click', (e)=>{
+      try{ e.preventDefault() }catch(_){ }
+      try{
+        if(this.fileInput && typeof this.fileInput.showPicker==='function'){
+          this.fileInput.showPicker();
+        } else if(this.fileInput && typeof this.fileInput.click==='function'){
+          this.fileInput.click();
+        }
+      }catch(_){ try{ this.fileInput && this.fileInput.click && this.fileInput.click() }catch(__){} }
+    });
     this.fileInput.addEventListener('change', async (e)=>{
       const files = [...(e.target.files||[])];
       if(files.length===0) return;
@@ -424,12 +464,22 @@ class AppUI {
     const debugBtn = $$('#btn-debug'); if(debugBtn){ debugBtn.addEventListener('click', ()=>this._toggleDebug()) }
 
     // Tool interactions bridged through viewer pointer events
-    let drawing=null;
+    let drawing=null; this.selectedAnn=null; this.editing=null;
     this.viewer.on('pointerdown', ({e, px, py, world})=>{
       if(!this.state.page) return;
       if(this.tool==='pan') return; // viewer will pan by default
       e.preventDefault();
       if(this.tool==='highlight'){
+        // Try hit test existing highlight first
+        const hit = this._hitHighlight(px, py);
+        if(hit){
+          this.selectedAnn = hit.ann; this.viewer.selectedAnnId = hit.ann.id; this.viewer.requestRender();
+          const ori = Math.abs(hit.ann.points[1].x - hit.ann.points[0].x) >= Math.abs(hit.ann.points[1].y - hit.ann.points[0].y) ? 'h' : 'v';
+          this.editing = { mode:hit.kind, ann:hit.ann, startWorld:world, startPts:[{...hit.ann.points[0]},{...hit.ann.points[1]}], axis:ori };
+          return;
+        }
+        // no hit -> create
+        this.selectedAnn=null; this.viewer.selectedAnnId=null; this.viewer.requestRender();
         this._highlightAt(world).catch(err=>{ this._debug('highlight:error', String(err&&err.message||err)) });
         return;
       }
@@ -441,10 +491,26 @@ class AppUI {
       // start two-point shapes
       drawing = { start: world, last: world };
     });
-    this.viewer.on('pointermove', ({world})=>{
+    this.viewer.on('pointermove', ({world, px, py})=>{
+      if(this.editing){
+        const ed=this.editing; const ann=ed.ann; const sp=ed.startPts; const axis=ed.axis; const dx=world.x - ed.startWorld.x; const dy=world.y - ed.startWorld.y;
+        if(ed.mode==='body'){
+          if(axis==='h'){ ann.points[0].x = sp[0].x + dx; ann.points[1].x = sp[1].x + dx; const y = sp[0].y + dy; ann.points[0].y = y; ann.points[1].y = y; }
+          else { ann.points[0].y = sp[0].y + dy; ann.points[1].y = sp[1].y + dy; const x = sp[0].x + dx; ann.points[0].x = x; ann.points[1].x = x; }
+        } else if(ed.mode==='handle0'){
+          if(axis==='h'){ ann.points[0].x = sp[0].x + dx; ann.points[0].y = sp[1].y; }
+          else { ann.points[0].y = sp[0].y + dy; ann.points[0].x = sp[1].x; }
+        } else if(ed.mode==='handle1'){
+          if(axis==='h'){ ann.points[1].x = sp[1].x + dx; ann.points[1].y = sp[0].y; }
+          else { ann.points[1].y = sp[1].y + dy; ann.points[1].x = sp[0].x; }
+        }
+        this.viewer.requestRender();
+        return;
+      }
       if(!drawing) return; drawing.last = world; this._previewTwoPoint(drawing.start, drawing.last);
     });
     this.viewer.on('pointerup', ()=>{
+      if(this.editing){ this.editing=null; this._queueAutosave(); return }
       if(!drawing) return; const {start,last}=drawing; drawing=null;
       if(this.tool==='rect') this._addAnnotation({type:'rect', points:[start,last], props:{color:'#6df2bf'}});
       if(this.tool==='arrow') this._addAnnotation({type:'arrow', points:[start,last], props:{color:'#4cc2ff'}});
@@ -473,6 +539,20 @@ class AppUI {
     this.hlStop=$$('#hl-stop');
     try{ const s=localStorage.getItem('hlStop'); if(this.hlStop && (s==='0'||s==='1')) this.hlStop.checked = (s!=='0') }catch(_){ }
     if(this.hlStop){ this.hlStop.addEventListener('change', ()=>{ try{ localStorage.setItem('hlStop', this.hlStop.checked?'1':'0') }catch(_){ } }); }
+    this.hlJunc=$$('#hl-junc');
+    try{ const v=localStorage.getItem('hlJunc'); if(this.hlJunc && v!==null) this.hlJunc.value=v }catch(_){ }
+    if(this.hlJunc){ this.hlJunc.addEventListener('input', ()=>{ try{ localStorage.setItem('hlJunc', this.hlJunc.value) }catch(_){ } }); }
+    this.hlExtend=$$('#hl-extend');
+    // OpenCV highlight fallback toggle (optional; default false)
+    this.cvHlFallback=$$('#cv-hl-fallback');
+    try{ const v=localStorage.getItem('cvHlFallback'); if(this.cvHlFallback){ this.cvHlFallback.checked = v==='1' } }catch(_){ }
+    if(this.cvHlFallback){ this.cvHlFallback.addEventListener('change', ()=>{ try{ localStorage.setItem('cvHlFallback', this.cvHlFallback.checked?'1':'0') }catch(_){ } }); }
+    // Highlighter mode: classic (default) vs new straight-segment
+    this.hlNew=$$('#hl-new');
+    try{ const v=localStorage.getItem('hlNew'); if(this.hlNew){ this.hlNew.checked = (v==='1') } }catch(_){ }
+    if(this.hlNew){ this.hlNew.addEventListener('change', ()=>{ try{ localStorage.setItem('hlNew', this.hlNew.checked?'1':'0') }catch(_){ } }); }
+    try{ const e=localStorage.getItem('hlExtend'); if(this.hlExtend && e!==null) this.hlExtend.value=e }catch(_){ }
+    if(this.hlExtend){ this.hlExtend.addEventListener('input', ()=>{ try{ localStorage.setItem('hlExtend', this.hlExtend.value) }catch(_){ } }); }
 
     // Layers UI
     this.layersList=$$('#layers-list'); this.layerAdd=$$('#layer-add'); this.layerRename=$$('#layer-rename'); this.layerDelete=$$('#layer-delete'); this.layerActive=$$('#layer-active');
@@ -551,7 +631,7 @@ class AppUI {
       const want = (location.hash||'').includes('debug') || localStorage.getItem('debugPanel')==='1';
       if(want && this.debugPanel){ this.debugPanel.classList.remove('hidden') }
     }catch(_){ }
-    this._debug('boot', { ua:navigator.userAgent, protocol:location.protocol, sw:'serviceWorker' in navigator, features:{ createImageBitmap: !!window.createImageBitmap } });
+    this._debug('boot', { ua:navigator.userAgent, protocol:location.protocol, sw:'serviceWorker' in navigator, appJs: (typeof window!=='undefined' && window.APP_JS_VERSION)||'dev', features:{ createImageBitmap: !!window.createImageBitmap } });
     window.DEBUG_MEMO_LOG = (tag,data)=>this._debug(tag,data);
     // Global error hooks to capture issues in the debug panel
     window.addEventListener('error', (e)=>{
@@ -636,8 +716,6 @@ class AppUI {
     const base = p.cvCanvas || p.bitmap;
     p.processedCanvas = await applyEnhancements(base, p.enhance);
     this._debug('enhance:done', {canvas:{w:p.processedCanvas.width,h:p.processedCanvas.height}});
-    // Invalidate wire graph when visuals change
-    p._graphReady=false; p._graphStamp='';
     if(p===this.state.page) this.viewer.requestRender(true);
   }
   _updateScale(){
@@ -658,23 +736,21 @@ class AppUI {
   }
   async _highlightAt(world){
     const p=this.state.page; if(!p) return;
-    try{
-      // Prefer graph-based tracing if worker available
+    const useNew = !!(this.hlNew && this.hlNew.checked);
+    // Classic mode (default): follow the wire as a path (no OpenCV)
+    if(!useNew){
       try{
-        if(!(window.cvWorker && window.cvWorkerReady)){
-          await loadOpenCV(this.cvLoad);
+        const path = this._classicTrace(world.x|0, world.y|0);
+        if(path && path.length>=2){
+          const w = +(this.hlWidth?.value||6);
+          this._addAnnotation({type:'highlightPath', points:path, props:{color:'#ffd166', width:w}});
+          this._debug('highlight:classic', {n:path.length});
+          return;
         }
-        const built = await this._cvEnsureGraphBuilt(p);
-        if(built){
-          const path = await this._cvTracePath(p, world.x|0, world.y|0);
-          if(path && path.length>=2){
-            const w = +(this.hlWidth?.value||6);
-            this._addAnnotation({type:'highlight', points:path.map(pt=>({x:pt.x,y:pt.y})), props:{color:'#ffd166', width:w}});
-            this._debug('highlight:graph', {len:path.length});
-            return;
-          }
-        }
-      }catch(e){ this._debug('highlight:graph:error', String(e&&e.message||e)); }
+      }catch(_){ }
+      // If classic fails to find a path, fall back to the new straight segment logic below
+    }
+    try{
       // First try a quick, local scan-based detector (no OpenCV needed)
       const seg = this._scanForLineSegment(world.x|0, world.y|0);
       if(seg){
@@ -684,8 +760,20 @@ class AppUI {
         return;
       }
     }catch(_){ }
-    // If scan fails, try OpenCV-based detection. If worker not loaded, attempt to load it (non-blocking to UI).
+    // If scan fails, try a robust axis-aligned extension anyway
     try{
+      const out2 = this._extendFromClick(world);
+      if(out2){
+        const w = +(this.hlWidth?.value||6);
+        this._addAnnotation({type:'highlight', points:[{x:out2.x1,y:out2.y1},{x:out2.x2,y:out2.y2}], props:{color:'#ffd166', width:w}});
+        this._debug('highlight:extend', out2);
+        return;
+      }
+    }catch(_){ }
+    // Optional: OpenCV fallback only if explicitly enabled in UI
+    try{
+      const useCv = !!(this.cvHlFallback && this.cvHlFallback.checked);
+      if(!useCv){ this._debug('highlight:none', { x:world.x, y:world.y }); return }
       if(!(window.cvWorker && window.cvWorkerReady)){
         this._debug('highlight:load-cv', {x:world.x,y:world.y});
         try{ await loadOpenCV(this.cvLoad); }catch(e){ this._debug('highlight:load-cv:error', String(e&&e.message||e)); this._toast('OpenCV load failed', 'error'); return }
@@ -701,11 +789,48 @@ class AppUI {
       }
     }catch(e){ this._debug('highlight:cv:error', String(e&&e.message||e)); }
   }
+
+  // Classic tracer: follow ink pixels to build a polyline path along the wire
+  _classicTrace(cx, cy){
+    const p=this.state.page; if(!p) return null; const src=p.processedCanvas || p.cvCanvas || this._sourceCanvas(); if(!src) return null;
+    const w=src.width, h=src.height; if(cx<0||cy<0||cx>=w||cy>=h) return null;
+    const ctx=src.getContext('2d', { willReadFrequently:true });
+    const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+    const localStats=()=>{ const win=80; const xL=clamp(cx-win,0,w-1), xR=clamp(cx+win,0,w-1), yT=clamp(cy-win,0,h-1), yB=clamp(cy+win,0,h-1); const patch=ctx.getImageData(xL,yT,xR-xL+1,yB-yT+1).data; let sum=0,c=0; for(let i=0;i<patch.length;i+=4){ const r=patch[i],g=patch[i+1],b=patch[i+2]; sum+=0.2126*r+0.7152*g+0.0722*b; c++; } const bg=sum/Math.max(1,c); return {preferDark:bg>140, darkThr:Math.max(0,Math.min(255,bg-40)), brightThr:Math.max(0,Math.min(255,bg+40))} };
+    const {preferDark,darkThr,brightThr} = localStats();
+    const getLum=(x,y)=>{ const u=ctx.getImageData(x,y,1,1).data; return (0.2126*u[0]+0.7152*u[1]+0.0722*u[2])|0 };
+    const isOn=(x,y)=>{ const l=getLum(x,y); return preferDark ? (l<=darkThr) : (l>=brightThr) };
+    // Find nearest ink near click
+    const nearInk=(x,y,r)=>{ if(isOn(x,y)) return {x,y}; for(let R=1; R<=r; R++){ for(let dy=-R; dy<=R; dy++){ const yy=y+dy; if(yy<0||yy>=h) continue; for(let dx=-R; dx<=R; dx++){ const xx=x+dx; if(xx<0||xx>=w) continue; if(dx*dx+dy*dy>R*R) continue; if(isOn(xx,yy)) return {x:xx,y:yy}; } } } return null };
+    const seed = nearInk(cx,cy,24); if(!seed) return null; cx=seed.x; cy=seed.y;
+    // Choose next step that best aligns with current direction
+    const dirs=[[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
+    function stepFrom(px,py,cx,cy){
+      let best=null, bestScore=-1e9; const dirx=cx-px, diry=cy-py; const dlen=Math.hypot(dirx,diry)||1;
+      for(const [dx,dy] of dirs){ const nx=cx+dx, ny=cy+dy; if(nx<0||ny<0||nx>=w||ny>=h) continue; if(nx===px&&ny===py) continue; if(!isOn(nx,ny)) continue; const clen=Math.hypot(dx,dy)||1; const cos=(dirx*dx + diry*dy)/(dlen*clen); const lateral=Math.abs(dirx*dy - diry*dx)/(dlen*clen); const score=cos - 0.06*lateral; if(score>bestScore){ bestScore=score; best={x:nx,y:ny} } }
+      return best;
+    }
+    function walk(dir){ let path=[{x:cx,y:cy}], px=cx, py=cy; let cur=dir||seed; let steps=0, misses=0; const MAX=Math.max(w,h)*4; while(steps++<MAX){ const n=stepFrom(px,py,cur.x,cur.y); if(!n){ if(++misses>2) break; else { // small jiggle: try any on-neighbor
+            let any=null; for(const [dx,dy] of dirs){ const nx=cur.x+dx, ny=cur.y+dy; if(nx<0||ny<0||nx>=w||ny>=h) continue; if(isOn(nx,ny)) { any={x:nx,y:ny}; break } } if(!any) break; px=cur.x; py=cur.y; cur=any; path.push(any); continue; }
+        misses=0; px=cur.x; py=cur.y; cur=n; path.push(n); }
+      return path;
+    }
+    const fwd = walk();
+    // walk backwards by swapping initial direction
+    function reverseDir(){ if(fwd.length>=2){ const a=fwd[0], b=fwd[1]; return {x:a.x*2-b.x, y:a.y*2-b.y} } return {x:cx-1,y:cy} }
+    const revStart = reverseDir();
+    const back = walk(revStart).reverse();
+    // Merge and thin points
+    const path = back.concat(fwd.slice(1));
+    const stepPix = 6; const out=[path[0]]; for(let i=1;i<path.length;i++){ const a=out[out.length-1], b=path[i]; if(Math.hypot(b.x-a.x,b.y-a.y)>=stepPix) out.push(b); }
+    // Convert to world coords
+    return out.map(p=>({x:p.x, y:p.y}));
+  }
   _scanForLineSegment(cx, cy){
     const p=this.state.page; if(!p) return null;
     const src = p.processedCanvas || p.cvCanvas || this._sourceCanvas();
     if(!src) return null; const w=src.width, h=src.height; if(cx<0||cy<0||cx>=w||cy>=h) return null;
-    const ctx = src.getContext('2d');
+    const ctx = src.getContext('2d', { willReadFrequently:true });
     const clampXY=(v,lo,hi)=>v<lo?lo:v>hi?hi:v;
     const thickness = 3; const stripe = thickness*2+1; const gapTol=3; const minLen=12; // stricter gaps and min length
     // Use a local window to avoid false positives far away
@@ -767,7 +892,7 @@ class AppUI {
     const ry = Math.max(0, Math.min(h-1, Math.round(py-pad)));
     const rw = Math.max(1, Math.min(w-rx, Math.round(2*pad)));
     const rh = Math.max(1, Math.min(h-ry, Math.round(2*pad)));
-    const ctx = s.getContext('2d'); const imgData = ctx.getImageData(rx, ry, rw, rh);
+    const ctx = s.getContext('2d', { willReadFrequently:true }); const imgData = ctx.getImageData(rx, ry, rw, rh);
     return new Promise((resolve)=>{
       const onMsg = (ev)=>{
         const d=ev.data||{}; if(d.type==='detectLine:result'){ window.cvWorker.removeEventListener('message', onMsg); resolve(d.seg||null) }
@@ -777,50 +902,46 @@ class AppUI {
     });
   }
 
+  // Hit-test highlight annotations near a screen point; returns {ann, kind}
+  _hitHighlight(px, py){
+    const p=this.state.page; if(!p) return null; const anns=p.annotations.filter(a=>a.type==='highlight');
+    const v=this.viewer; const segTol=8; const handleTol=9;
+    const distPtSeg=(x,y,x1,y1,x2,y2)=>{
+      const vx=x2-x1, vy=y2-y1; const wx=x-x1, wy=y-y1; const c1=vx*wx+vy*wy; if(c1<=0) return Math.hypot(x-x1,y-y1); const c2=vx*vx+vy*vy; if(c2<=c1) return Math.hypot(x-x2,y-y2); const t=c1/c2; const rx=x1+t*vx, ry=y1+t*vy; return Math.hypot(x-rx,y-ry);
+    };
+    let best=null; let bestD=1e9;
+    for(const a of anns){
+      const p1=v.worldToScreen(a.points[0].x,a.points[0].y); const p2=v.worldToScreen(a.points[1].x,a.points[1].y);
+      const d = distPtSeg(px,py,p1.x,p1.y,p2.x,p2.y);
+      const d1 = Math.hypot(px-p1.x, py-p1.y); const d2=Math.hypot(px-p2.x, py-p2.y);
+      if(d1<=handleTol && d1<bestD){ best={ann:a,kind:'handle0'}; bestD=d1; continue }
+      if(d2<=handleTol && d2<bestD){ best={ann:a,kind:'handle1'}; bestD=d2; continue }
+      if(d<=segTol && d<bestD){ best={ann:a,kind:'body'}; bestD=d; }
+    }
+    return best;
+  }
+
   // Robust axis-aligned extension from click: tries horizontal and vertical, picks longer
   _extendFromClick(world, prefer){
-    const p=this.state.page; if(!p) return null; const src = p.processedCanvas || p.cvCanvas || this._sourceCanvas(); if(!src) return null;
-    const w=src.width, h=src.height; const ctx=src.getContext('2d');
+    const app = this || (typeof window!=='undefined' && window.__appUIInstance);
+    if(!app) return null;
+    const p=app.state.page; if(!p) return null; const src = p.processedCanvas || p.cvCanvas || app._sourceCanvas(); if(!src) return null;
+    const w=src.width, h=src.height; const ctx=src.getContext('2d', { willReadFrequently:true });
     const clamp=(v,a,b)=>v<a?a:v>b?b:v; const cx=clamp(Math.round(world.x),0,w-1), cy=clamp(Math.round(world.y),0,h-1);
     const localStats=()=>{ const win=80; const xL=clamp(cx-win,0,w-1), xR=clamp(cx+win,0,w-1), yT=clamp(cy-win,0,h-1), yB=clamp(cy+win,0,h-1); const patch=ctx.getImageData(xL,yT,xR-xL+1,yB-yT+1).data; let sum=0,c=0; for(let i=0;i<patch.length;i+=4){ const r=patch[i],g=patch[i+1],b=patch[i+2]; sum+=0.2126*r+0.7152*g+0.0722*b; c++; } const bg=sum/Math.max(1,c); return {bg, preferDark:bg>140, darkThr:Math.max(0,Math.min(255,bg-40)), brightThr:Math.max(0,Math.min(255,bg+40))} };
     const {preferDark,darkThr,brightThr} = localStats();
     const isLinePix=(l)=> preferDark ? (l<=darkThr):(l>=brightThr);
     const getLum=(x,y)=>{ const u=ctx.getImageData(x,y,1,1).data; return (0.2126*u[0]+0.7152*u[1]+0.0722*u[2])|0 };
-    const stopAt = this.hlStop ? !!this.hlStop.checked : true;
+    const stopAt = (app?.hlStop?.checked ?? true);
     function extend(orient){
       const maxC=16; const maxStep=Math.max(w,h); let posX=cx, posY=cy;
       const crossWidthAt=(x,y)=>{ let run=0,best=0,center=0,cur=0,curStart=-1; for(let k=-maxC;k<=maxC;k++){ const xx=orient==='h'?clamp(x+k,0,w-1):x; const yy=orient==='h'?y:clamp(y+k,0,h-1); const l=getLum(xx,yy); const on=isLinePix(l); if(on){ if(cur===0){curStart=k} cur++; if(cur>best){best=cur; center=Math.round((curStart+k)/2)} } else { cur=0 } } return {width:best, centerOffset:center}; };
       let cw = crossWidthAt(posX,posY); if(orient==='h') posY=clamp(posY+cw.centerOffset,0,h-1); else posX=clamp(posX+cw.centerOffset,0,w-1);
-      const baseWidth=Math.max(1,cw.width); const widenStop = stopAt ? Math.max(Math.round(baseWidth*1.8), baseWidth+3) : Number.POSITIVE_INFINITY; const shrinkStop=Math.max(1,Math.round(baseWidth*0.5)); const minStopSteps=Math.max(4,Math.round(baseWidth*1.5));
+      const juncSens = +(app?.hlJunc?.value ?? 60); const extendBias=+(app?.hlExtend?.value ?? 50);
+      const baseWidth=Math.max(1,cw.width); const widenStop = stopAt ? Math.max(Math.round(baseWidth*1.8), baseWidth+3) : Number.POSITIVE_INFINITY; const shrinkStop=Math.max(1,Math.round(baseWidth*0.5)); const minStopSteps=Math.max(4,Math.round(baseWidth*(1 + extendBias/50))); const missMax=Math.max(3, Math.round(2 + extendBias/5));
       const hasPerpBranch=(x,y)=>{
         if(!stopAt) return false; const reach=12, near=2; let best=0; if(orient==='h'){ for(let dx=-near; dx<=near; dx++){ const xx=clamp(x+dx,0,w-1); let run=0; for(let dy=-reach; dy<=reach; dy++){ const yy=clamp(y+dy,0,h-1); const l=getLum(xx,yy); if(isLinePix(l)){ run++; best=Math.max(best,run) } else { run=0 } } } } else { for(let dy=-near; dy<=near; dy++){ const yy=clamp(y+dy,0,h-1); let run=0; for(let dx=-reach; dx<=reach; dx++){ const xx=clamp(x+dx,0,w-1); const l=getLum(xx,yy); if(isLinePix(l)){ run++; best=Math.max(best,run) } else { run=0 } } } } return best>=8; };
-      function walk(dir){
-        let x=posX, y=posY, miss=0, steps=0, lastX=x, lastY=y;
-        // Allow bigger gap-bridging for thicker strokes
-        const missLimit = Math.max(6, Math.round(baseWidth * 2.5));
-        while(steps++<maxStep){
-          if(orient==='h'){
-            x+=dir; if(x<0||x>=w) break; const m=crossWidthAt(x,y);
-            if(m.width>=shrinkStop){
-              lastX=x; lastY=y;
-              if(steps>minStopSteps && (m.width>=widenStop || hasPerpBranch(x,y))){ break }
-              miss=0;
-            } else {
-              if(++miss>missLimit) break;
-            }
-          } else {
-            y+=dir; if(y<0||y>=h) break; const m=crossWidthAt(x,y);
-            if(m.width>=shrinkStop){
-              lastX=x; lastY=y;
-              if(steps>minStopSteps && (m.width>=widenStop || hasPerpBranch(x,y))){ break }
-              miss=0;
-            } else {
-              if(++miss>missLimit) break;
-            }
-          }
-        }
-        return {x:lastX,y:lastY,width:baseWidth};
-      }
+      function walk(dir){ let x=posX,y=posY,miss=0,steps=0,lastX=x,lastY=y; while(steps++<maxStep){ if(orient==='h'){ x+=dir; if(x<0||x>=w) break; const m=crossWidthAt(x,y); if(m.width>=shrinkStop){ lastX=x; lastY=y; if(steps>minStopSteps && (m.width>=widenStop || hasPerpBranch(x,y))){ break } miss=0 } else { if(++miss>missMax) break } } else { y+=dir; if(y<0||y>=h) break; const m=crossWidthAt(x,y); if(m.width>=shrinkStop){ lastX=x; lastY=y; if(steps>minStopSteps && (m.width>=widenStop || hasPerpBranch(x,y))){ break } miss=0 } else { if(++miss>missMax) break } } } return {x:lastX,y:lastY,width:baseWidth}; }
       const a=walk(-1), b=walk(1); const len = orient==='h'? Math.abs(b.x-a.x) : Math.abs(b.y-a.y); return { seg: orient==='h'?{x1:a.x,y1:a.y,x2:b.x,y2:b.y,kind:'h'}:{x1:a.x,y1:a.y,x2:b.x,y2:b.y,kind:'v'}, len, width:Math.max(4, Math.round(baseWidth*2.2)) };
     }
     const H=extend('h'), V=extend('v');
@@ -839,8 +960,10 @@ class AppUI {
 
   // Extend a detected segment along its axis until a junction dot/symbol or gap is detected.
   _extendLineFromSeed(seg, world){
-    const p=this.state.page; if(!p) return null; const src = p.processedCanvas || p.cvCanvas || this._sourceCanvas(); if(!src) return null;
-    const w=src.width, h=src.height; const ctx=src.getContext('2d');
+    const app = this || (typeof window!=='undefined' && window.__appUIInstance);
+    if(!app) return null;
+    const p=app.state.page; if(!p) return null; const src = p.processedCanvas || p.cvCanvas || app._sourceCanvas(); if(!src) return null;
+    const w=src.width, h=src.height; const ctx=src.getContext('2d', { willReadFrequently:true });
     // Determine orientation from seg
     const dx=Math.abs(seg.x2-seg.x1), dy=Math.abs(seg.y2-seg.y1);
     const orient = (dx>=dy)?'h':'v';
@@ -853,6 +976,7 @@ class AppUI {
     const isLinePix=(l)=> preferDark ? (l<=darkThr):(l>=brightThr);
     const getLum=(x,y)=>{ const id=ctx.getImageData(x,y,1,1).data; return (0.2126*id[0]+0.7152*id[1]+0.0722*id[2])|0 };
     // Detect a perpendicular branch (junction) near the current axis point
+    const stopAt = (app?.hlStop?.checked ?? true);
     const hasPerpBranch=(x,y)=>{
       if(!stopAt) return false;
       const reach = 12; const near=2; let bestRun=0;
@@ -889,10 +1013,12 @@ class AppUI {
     // Align to center of stroke locally
     let posX=cx, posY=cy; const cw = crossWidthAt(posX,posY); if(orient==='h'){ posY = clamp(posY+cw.centerOffset,0,h-1) } else { posX = clamp(posX+cw.centerOffset,0,w-1) }
     const baseWidth = Math.max(1, cw.width);
-    const stopAt = this.hlStop ? !!this.hlStop.checked : true;
+    const juncSens = +(app?.hlJunc?.value ?? 60); // 0..100
+    const extendBias = +(app?.hlExtend?.value ?? 50); // 0..100
     let widenStop = Math.max( Math.round(baseWidth*1.8), baseWidth+3 );
     if(!stopAt){ widenStop = Number.POSITIVE_INFINITY }
-    const minStopSteps = Math.max(4, Math.round(baseWidth*1.5));
+    const minStopSteps = Math.max(4, Math.round(baseWidth*(1 + extendBias/50)));
+    const missMax = Math.max(3, Math.round(2 + extendBias/5));
     const shrinkStop = Math.max(1, Math.round(baseWidth*0.5));
     const stepLimit = Math.max(w,h);
       function walk(dir){
@@ -900,10 +1026,10 @@ class AppUI {
         while(steps++<stepLimit){
         if(orient==='h'){
           x += dir; if(x<0||x>=w) break; const m=crossWidthAt(x,y);
-          if(m.width>=shrinkStop){ lastGoodX=x; lastGoodY=y; if(steps>minStopSteps && (m.width>=widenStop || hasPerpBranch(x,y))){ break } misses=0 } else { if(++misses>6) break }
+          if(m.width>=shrinkStop){ lastGoodX=x; lastGoodY=y; if(steps>minStopSteps && (m.width>=widenStop || hasPerpBranch(x,y))){ break } misses=0 } else { if(++misses>missMax) break }
         } else {
           y += dir; if(y<0||y>=h) break; const m=crossWidthAt(x,y);
-          if(m.width>=shrinkStop){ lastGoodX=x; lastGoodY=y; if(steps>minStopSteps && (m.width>=widenStop || hasPerpBranch(x,y))){ break } misses=0 } else { if(++misses>6) break }
+          if(m.width>=shrinkStop){ lastGoodX=x; lastGoodY=y; if(steps>minStopSteps && (m.width>=widenStop || hasPerpBranch(x,y))){ break } misses=0 } else { if(++misses>missMax) break }
         }
         }
         return {x:lastGoodX, y:lastGoodY};
@@ -935,6 +1061,12 @@ class AppUI {
     if(e.key==='4'){ this.tool='text'; this._syncToolButtons(); return }
     if(e.key==='5'){ this.tool='measure'; this._syncToolButtons(); return }
     if(e.key==='6'){ this.tool='highlight'; this._syncToolButtons(); return }
+    if(e.key==='Delete' || e.key==='Backspace'){
+      if(this.selectedAnn && this.selectedAnn.type==='highlight'){
+        const p=this.state.page; const i=p.annotations.indexOf(this.selectedAnn); if(i>=0){ p.annotations.splice(i,1); this.selectedAnn=null; this.viewer.selectedAnnId=null; this.viewer.requestRender(); this._queueAutosave(); }
+      }
+      return;
+    }
   }
   async _exportProject(){
     const proj = { version:2, pages:[] };
@@ -1009,6 +1141,7 @@ class AppUI {
 // Boot once DOM is ready
 document.addEventListener('DOMContentLoaded', ()=>{
   const app = new AppUI();
+  try{ window.__appUIInstance = app }catch(_){ }
 });
 
 // Tiny IndexedDB helper (no external deps)
@@ -1037,8 +1170,26 @@ function openDB(name, version, upgrade){
 function idbReq(req){ return new Promise((res,rej)=>{ req.onsuccess=()=>res(req.result); req.onerror=()=>rej(req.error) }) }
 
 // Toast helper
-AppUI.prototype._setupToast = function(){ this.toast = document.getElementById('toast') }
-AppUI.prototype._toast = function(msg, kind='ok'){ if(!this.toast) return; this.toast.className = `toast show ${kind==='error'?'error':'ok'}`; this.toast.textContent = msg; clearTimeout(this._toastTimer); this._toastTimer = setTimeout(()=>{ this.toast.classList.remove('show') }, 2500) }
+  AppUI.prototype._setupToast = function(){ this.toast = document.getElementById('toast') }
+  AppUI.prototype._toast = function(msg, kind='ok'){ if(!this.toast) return; this.toast.className = `toast show ${kind==='error'?'error':'ok'}`; this.toast.textContent = msg; clearTimeout(this._toastTimer); this._toastTimer = setTimeout(()=>{ this.toast.classList.remove('show') }, 2500) }
+
+  // Hook Debug controls (copy/clear exist in HTML). Add Disable SW action.
+  ;(function(){
+    try{
+      const btn = document.getElementById('debug-sw-off');
+      if(btn){
+        btn.addEventListener('click', async ()=>{
+          btn.disabled = true; const prev = btn.textContent; btn.textContent = 'Disabling…';
+          try{
+            await Viewer.disableServiceWorker();
+            (window.__appUIInstance?._toast:()=>{})('Service worker disabled. Reloading…');
+            setTimeout(()=>location.reload(true), 300);
+          }catch(e){ alert('Failed to disable SW: '+(e&&e.message||e)) }
+          finally{ btn.disabled=false; btn.textContent=prev }
+        });
+      }
+    }catch(_){ }
+  })();
 
 // OpenCV loader
 function loadOpenCV(button){
@@ -1080,6 +1231,7 @@ function loadOpenCV(button){
 // OpenCV operations
 AppUI.prototype._sourceCanvas = function(){ const p=this.state.page; if(!p) return null; if(p.cvCanvas) return p.cvCanvas; const c=document.createElement('canvas'); c.width=p.bitmap.width; c.height=p.bitmap.height; c.getContext('2d').drawImage(p.bitmap,0,0); return c };
 
+ DevShgOpenCv
 // Graph build/trace helpers (run in worker)
 AppUI.prototype._cvEnsureGraphBuilt = async function(page){
   const p = page||this.state.page; if(!p) return false;
@@ -1104,9 +1256,11 @@ AppUI.prototype._cvTracePath = async function(page, x, y){
   });
 }
 
+
+ main
   AppUI.prototype._cvDeskew = function(){
   const p=this.state.page; if(!p) return; const c=this._sourceCanvas(); if(!c) return;
-  const ctx=c.getContext('2d'); const img=ctx.getImageData(0,0,c.width,c.height);
+  const ctx=c.getContext('2d', { willReadFrequently:true }); const img=ctx.getImageData(0,0,c.width,c.height);
   if(!(window.cvWorker && window.cvWorkerReady)){ this._toast('Load OpenCV first', 'error'); return }
   const w=window.cvWorker; const onMsg=(ev)=>{
     const d=ev.data||{}; if(d.type==='deskew:result'){
@@ -1121,7 +1275,7 @@ AppUI.prototype._cvTracePath = async function(page, x, y){
 
   AppUI.prototype._cvDenoise = function(){
   const p=this.state.page; if(!p) return; const c=this._sourceCanvas(); if(!c) return;
-  const ctx=c.getContext('2d'); const img=ctx.getImageData(0,0,c.width,c.height);
+  const ctx=c.getContext('2d', { willReadFrequently:true }); const img=ctx.getImageData(0,0,c.width,c.height);
   if(!(window.cvWorker && window.cvWorkerReady)){ this._toast('Load OpenCV first', 'error'); return }
   const w=window.cvWorker; const onMsg=(ev)=>{
     const d=ev.data||{}; if(d.type==='denoise:result'){
@@ -1136,7 +1290,7 @@ AppUI.prototype._cvTracePath = async function(page, x, y){
 
   AppUI.prototype._cvAdaptive = function(){
   const p=this.state.page; if(!p) return; const c=this._sourceCanvas(); if(!c) return;
-  const ctx=c.getContext('2d'); const img=ctx.getImageData(0,0,c.width,c.height);
+  const ctx=c.getContext('2d', { willReadFrequently:true }); const img=ctx.getImageData(0,0,c.width,c.height);
   if(!(window.cvWorker && window.cvWorkerReady)){ this._toast('Load OpenCV first', 'error'); return }
   const w=window.cvWorker; const onMsg=(ev)=>{
     const d=ev.data||{}; if(d.type==='adaptive:result'){

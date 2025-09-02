@@ -1,24 +1,26 @@
 // OpenCV worker: loads OpenCV.js off the main thread and performs CV ops.
 // Messages:
-//  - {type:'init'} => loads OpenCV (from CDN) and posts {type:'ready'}
+//  - {type:'init'} => loads OpenCV (from local copy) and posts {type:'ready'}
 //  - {type:'detectLine', roi:{data:ArrayBuffer,width,height,rx,ry}, click:{x,y}} => posts {type:'detectLine:result', seg:{x1,y1,x2,y2}|null}
 //  - {type:'deskew'|'denoise'|'adaptive', image:{data:ArrayBuffer,width,height}} => posts {type:`<op>:result`, image:{data:ArrayBuffer,width,height}}
+ DevShgOpenCv
 //  - {type:'buildGraph', id:string, image:{data,width,height}} => build per-page wire graph; posts {type:'buildGraph:result', id}
 //  - {type:'tracePath', id:string, click:{x,y}, opts?:{stopAt?:boolean}} => posts {type:'tracePath:result', id, path:[{x,y},...]|null}
 
+ main
+
 let ready = false;
-// Cache of graphs per page id
-const graphs = new Map();
 
 function loadCV() {
   return new Promise((resolve, reject) => {
     if (ready) return resolve();
-    // Make sure wasm path resolves when loading from CDN
+    // Ensure wasm (if used) resolves next to the local script
     self.Module = {
-      locateFile: (file) => `https://docs.opencv.org/4.x/${file}`
+      locateFile: (file) => `opencv/${file}`
     };
     try {
-      importScripts('https://docs.opencv.org/4.x/opencv.js');
+      // Load from same-origin to avoid CORS issues on GitHub Pages
+      importScripts('opencv/opencv.js');
     } catch (e) {
       reject(e);
       return;
@@ -138,6 +140,7 @@ self.onmessage = async (e) => {
     }
     if (!ready) { await loadCV(); }
     switch (msg.type) {
+DevShgOpenCv
       case 'buildGraph': {
         const { id, image } = msg;
         const graph = buildWireGraph(image);
@@ -153,6 +156,8 @@ self.onmessage = async (e) => {
         self.postMessage({ type:'tracePath:result', id, path });
         break;
       }
+
+ main
       case 'detectLine': {
         const { roi, click } = msg; // roi: {data,width,height,rx,ry}
         const imgData = new ImageData(new Uint8ClampedArray(roi.data), roi.width, roi.height);
@@ -183,6 +188,7 @@ self.onmessage = async (e) => {
     self.postMessage({ type: 'error', error: String(err && err.message || err) });
   }
 };
+DevShgOpenCv
 
 // -------------- Graph building --------------
 function buildWireGraph(srcRGBA){
@@ -411,3 +417,5 @@ for(const e of graph.edges){ const pts=e.points; for(let i=0;i<pts.length-1;i++)
   // Return path from a to b (full edge). Caller can downsample or map to world coords.
   return best.points;
 }
+
+ main
