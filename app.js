@@ -198,11 +198,6 @@ class Viewer extends Emitter {
     const ctx=this.octx; ctx.save();
     const color=a.props?.color||'#ffd166';
     ctx.strokeStyle=color; ctx.lineWidth=a.props?.width||4; ctx.lineCap='round';
-    { // apply UI alpha (Transparency slider is 0..100, where 0 = opaque)
-      const t = +(this.hlAlpha?.value||0);
-      const alpha = Math.max(0, Math.min(1, 1 - (t/100)));
-      ctx.globalAlpha = alpha;
-    }
     ctx.shadowColor=color; ctx.shadowBlur=8;
     const pts=a.points||[]; if(pts.length<2){ ctx.restore(); return }
     ctx.beginPath();
@@ -474,13 +469,17 @@ class AppUI {
     // Highlight tool options
     this.hlWidth=$$('#hl-width');
     try{ const saved=localStorage.getItem('hlWidth'); if(saved && this.hlWidth){ this.hlWidth.value=saved } }catch(_){ }
-    if(this.hlWidth){ this.hlWidth.addEventListener('input', ()=>{ try{ localStorage.setItem('hlWidth', this.hlWidth.value) }catch(_){ } }); }
+    if(this.hlWidth){ this.hlWidth.addEventListener('input', ()=>{ try{ localStorage.setItem('hlWidth', this.hlWidth.value) }catch(_){ } }); this.requestRender(); }
     this.hlStop=$$('#hl-stop');
     try{ const s=localStorage.getItem('hlStop'); if(this.hlStop && (s==='0'||s==='1')) this.hlStop.checked = (s!=='0') }catch(_){ }
     if(this.hlStop){ this.hlStop.addEventListener('change', ()=>{ try{ localStorage.setItem('hlStop', this.hlStop.checked?'1':'0') }catch(_){ } }); }
 
     // Layers UI
-    this.layersList=$$('#layers-list'); this.layerAdd=$$('#layer-add'); this.layerRename=$$('#layer-rename'); this.layerDelete=$$('#layer-delete'); this.layerActive=$$('#layer-active');
+    this.layersList=$$('#layers-list'); this.layerAdd=$$('#layer-add'); this.layerRename=$$('#layer-rename'); this.layerDelete=$$('#layer-delete'); this.layerActive=$$('
+    this.hlColor=$$('#hl-color');
+    try{ const savedC=localStorage.getItem('hlColor'); if(savedC && this.hlColor){ this.hlColor.value=savedC } }catch(_){ }
+    if(this.hlColor){ this.hlColor.addEventListener('input', ()=>{ try{ localStorage.setItem('hlColor', this.hlColor.value) }catch(_){ } this.requestRender(); }); }
+    #layer-active');
     this.layerAdd.addEventListener('click', ()=>this._addLayer());
     this.layerRename.addEventListener('click', ()=>this._renameActiveLayer());
     this.layerDelete.addEventListener('click', ()=>this._deleteActiveLayer());
@@ -674,7 +673,7 @@ class AppUI {
           const path = await this._cvTracePath(p, world.x|0, world.y|0);
           if(path && path.length>=2){
             const w = +(this.hlWidth?.value||6);
-            this._addAnnotation({type:'highlight', points:path.map(pt=>({x:pt.x,y:pt.y})), props:{color:'#ffd166', width:w}});
+            this._addAnnotation({type:'highlight', points:path.map(pt=>({x:pt.x,y:pt.y})), props:{color:(this.hlColor?.value||'#ffd166'), width:w}});
             this._debug('highlight:graph', {len:path.length});
             return;
           }
@@ -684,7 +683,7 @@ class AppUI {
       const seg = this._scanForLineSegment(world.x|0, world.y|0);
       if(seg){
         const out = this._extendFromClick(world) || seg; const w = +(this.hlWidth?.value||6);
-        this._addAnnotation({type:'highlight', points:[{x:out.x1,y:out.y1},{x:out.x2,y:out.y2}], props:{color:'#ffd166', width:w}});
+        this._addAnnotation({type:'highlight', points:[{x:out.x1,y:out.y1},{x:out.x2,y:out.y2}], props:{color:(this.hlColor?.value||'#ffd166'), width:w}});
         this._debug('highlight:scan', out);
         return;
       }
@@ -699,7 +698,7 @@ class AppUI {
       if(seg){
         const axis = (Math.abs(seg.x2-seg.x1)>=Math.abs(seg.y2-seg.y1))?'h':'v';
         const out = this._extendFromClick(world, axis) || seg; const w = +(this.hlWidth?.value||6);
-        this._addAnnotation({type:'highlight', points:[{x:out.x1,y:out.y1},{x:out.x2,y:out.y2}], props:{color:'#ffd166', width:w}});
+        this._addAnnotation({type:'highlight', points:[{x:out.x1,y:out.y1},{x:out.x2,y:out.y2}], props:{color:(this.hlColor?.value||'#ffd166'), width:w}});
         this._debug('highlight:cv', out);
       } else {
         this._debug('highlight:none', { x:world.x, y:world.y });
