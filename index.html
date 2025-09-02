@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Schematic Studio</title>
+  <link rel="stylesheet" href="styles.css">
+  <meta name="color-scheme" content="dark">
+  <style>
+    /* Minimal icon glyphs */
+    .i{font:14px/1 system-ui,Segoe UI Emoji;}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="toolbar">
+      <div class="tool-group">
+        <label id="btn-open" class="btn" for="file-input" title="Open (Ctrl+O)"><span class="i">📂</span> Open</label>
+        <button id="btn-save" title="Export Project (Ctrl+S)"><span class="i">💾</span> Save</button>
+        <input id="file-input" class="visually-hidden" type="file" accept="image/*,.png,.jpg,.jpeg,.bmp,.gif,.webp,.tif,.tiff" multiple>
+      </div>
+      <div class="tool-group">
+        <button id="btn-zoom-out" title="Zoom Out (-)">−</button>
+        <button id="btn-zoom-in" title="Zoom In (+)">+</button>
+        <button id="btn-fit" title="Fit (0)"><span class="i">🖼️</span> Fit</button>
+      </div>
+      <div class="tool-group toolbox">
+        <button id="tool-pan" aria-pressed="true" title="Pan (1)"><span class="i">✋</span> Pan</button>
+        <button id="tool-rect" title="Rectangle (2)"><span class="i">▭</span> Rect</button>
+        <button id="tool-arrow" title="Arrow (3)"><span class="i">➜</span> Arrow</button>
+        <button id="tool-text" title="Text (4)"><span class="i">🅣</span> Text</button>
+        <button id="tool-measure" title="Measure (5)"><span class="i">📏</span> Measure</button>
+      </div>
+      <div class="grow"></div>
+      <button id="btn-debug" title="Toggle Debug">Debug</button>
+      <button id="btn-help" title="Help"><span class="i">❔</span> Help</button>
+    </div>
+
+    <aside class="left">
+      <div class="panel">
+        <h3>Pages</h3>
+        <div class="muted">Drag & drop images, or use Open.</div>
+      </div>
+      <div class="thumbs" aria-label="Thumbnails"></div>
+    </aside>
+
+    <main class="main">
+      <div class="canvas-wrap"></div>
+      <div class="drop-overlay">Drop images to add pages</div>
+    </main>
+
+    <aside class="right">
+      <div class="panel">
+        <h3>Enhance</h3>
+        <div class="row"><label class="key">Brightness</label><input id="enh-bright" type="range" min="-100" max="100" value="0"></div>
+        <div class="row"><label class="key">Contrast</label><input id="enh-contrast" type="range" min="-100" max="100" value="0"></div>
+        <div class="row"><label class="key">Threshold</label><input id="enh-threshold" type="range" min="0" max="100" value="0"></div>
+        <div class="row"><label class="key">Sharpen</label><input id="enh-sharpen" type="range" min="0" max="100" value="0"></div>
+        <div class="row"><label><input id="enh-gray" type="checkbox"> Grayscale</label></div>
+        <div class="row"><label><input id="enh-invert" type="checkbox"> Invert</label></div>
+      </div>
+      <div class="panel">
+        <h3>Scale</h3>
+        <div class="row key-val"><div class="key">Units</div><div class="value"><select id="unit"><option value="in">inches</option><option value="cm">cm</option><option value="mm">mm</option></select></div></div>
+        <div class="row key-val"><div class="key">Pixels/Unit</div><div class="value"><input id="ppu" type="number" min="0.0001" step="0.01" value="10"></div></div>
+        <div class="muted">Use Measure tool to read distances. Adjust Pixels/Unit to calibrate to known reference.</div>
+      </div>
+      <div class="panel">
+        <h3>OpenCV Cleanup</h3>
+        <div class="row"><button id="cv-load" class="btn">Load OpenCV</button></div>
+        <div class="row"><button id="cv-deskew" class="btn">Auto Deskew</button></div>
+        <div class="row"><button id="cv-denoise" class="btn">Denoise</button></div>
+        <div class="row"><button id="cv-adapt" class="btn">Adaptive Threshold</button></div>
+        <div class="row"><button id="cv-reset" class="btn warn">Reset CV</button></div>
+        <div class="muted">First time uses network to load OpenCV. Then cached for offline.</div>
+      </div>
+
+      <div class="panel">
+        <h3>Highlight</h3>
+        <div class="row key-val"><div class="key">Thickness</div><div class="value"><input id="hl-width" type="range" min="1" max="40" step="1" value="6"></div></div>
+        <div class="row"><label><input id="hl-stop" type="checkbox"> Stop at junctions/symbols</label></div>
+      </div>
+      <div class="panel">
+        <h3>Layers</h3>
+        <div class="layers">
+          <div id="layers-list"></div>
+          <div class="layer-actions">
+            <button id="layer-add" class="btn">+ Add</button>
+            <button id="layer-rename" class="btn">Rename</button>
+            <button id="layer-delete" class="btn warn">Delete</button>
+          </div>
+          <div class="row key-val"><div class="key">Active</div><div class="value"><select id="layer-active"></select></div></div>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Properties</h3>
+        <div class="muted">Select annotations to edit properties (coming soon).</div>
+      </div>
+    </aside>
+
+    <div class="status">
+      <div class="pill">Zoom: <span id="status-zoom">100%</span></div>
+      <div class="pill">Page: <span id="status-page">0/0</span></div>
+      <div class="coords">Cursor: <span id="status-pos">x:0 y:0</span></div>
+    </div>
+  </div>
+
+  <div class="help" role="dialog" aria-modal="false">
+    <h3>Shortcuts & Tips</h3>
+    <div>
+      - Ctrl+O: Open images; Ctrl+S: Export project<br>
+      - + / -: Zoom; 0: Fit to view<br>
+      - 1..5: Pan, Rect, Arrow, Text, Measure<br>
+      - Mouse wheel + Ctrl: Smooth zoom to cursor<br>
+      - Drag with mouse: Pan (or while in Pan tool)<br>
+      - Enhancements: Brightness/Contrast/Threshold/Sharpen tuned for old scans
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <div id="debug-panel" class="debug-panel" aria-label="Debug Panel">
+    <div class="debug-head">
+      <div>Debug Memo</div>
+      <div class="debug-actions">
+        <button id="debug-copy" class="btn">Copy</button>
+        <button id="debug-clear" class="btn">Clear</button>
+      </div>
+    </div>
+    <textarea id="debug-memo" spellcheck="false" wrap="off" placeholder="Debug output will appear here..."></textarea>
+  </div>
+
+  <script defer src="app.js?v=3" onerror="(function(){try{var t=document.getElementById('toast'); if(t){t.className='toast show error'; t.textContent='Failed to load app.js';} var d=document.getElementById('debug-panel'); d && d.classList.remove('hidden');}catch(e){}})()"></script>
+  <script>
+    if('serviceWorker' in navigator && !location.search.includes('nosw')){
+      window.addEventListener('load', ()=>{
+        navigator.serviceWorker.register('./sw.js').catch(console.warn);
+      });
+    }
+  </script>
+</body>
+</html>
