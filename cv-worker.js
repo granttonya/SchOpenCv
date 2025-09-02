@@ -1,26 +1,24 @@
 // OpenCV worker: loads OpenCV.js off the main thread and performs CV ops.
 // Messages:
-//  - {type:'init'} => loads OpenCV (from local copy) and posts {type:'ready'}
+//  - {type:'init'} => loads OpenCV (from CDN) and posts {type:'ready'}
 //  - {type:'detectLine', roi:{data:ArrayBuffer,width,height,rx,ry}, click:{x,y}} => posts {type:'detectLine:result', seg:{x1,y1,x2,y2}|null}
 //  - {type:'deskew'|'denoise'|'adaptive', image:{data:ArrayBuffer,width,height}} => posts {type:`<op>:result`, image:{data:ArrayBuffer,width,height}}
- DevShgOpenCv
 //  - {type:'buildGraph', id:string, image:{data,width,height}} => build per-page wire graph; posts {type:'buildGraph:result', id}
-//  - {type:'tracePath', id:string, click:{x,y}, opts?:{stopAt?:boolean}} => posts {type:'tracePath:result', id, path:[{x,y},...]|null}
-
- main
+//  - {type:'tracePath', id:string, click:{x,y}} => posts {type:'tracePath:result', id, path:[{x,y},...]|null}
 
 let ready = false;
+// Cache of graphs per page id
+const graphs = new Map();
 
 function loadCV() {
   return new Promise((resolve, reject) => {
     if (ready) return resolve();
-    // Ensure wasm (if used) resolves next to the local script
+    // Make sure wasm path resolves when loading from CDN
     self.Module = {
-      locateFile: (file) => `opencv/${file}`
+      locateFile: (file) => `https://docs.opencv.org/4.x/${file}`
     };
     try {
-      // Load from same-origin to avoid CORS issues on GitHub Pages
-      importScripts('opencv/opencv.js');
+      importScripts('https://docs.opencv.org/4.x/opencv.js');
     } catch (e) {
       reject(e);
       return;
@@ -140,7 +138,6 @@ self.onmessage = async (e) => {
     }
     if (!ready) { await loadCV(); }
     switch (msg.type) {
-DevShgOpenCv
       case 'buildGraph': {
         const { id, image } = msg;
         const graph = buildWireGraph(image);
@@ -149,15 +146,13 @@ DevShgOpenCv
         break;
       }
       case 'tracePath': {
-        const { id, click, opts } = msg;
+        const { id, click } = msg;
         const g = graphs.get(id);
         if (!g) { self.postMessage({ type:'tracePath:result', id, path:null }); break; }
-        const path = tracePathFromClick(g, click.x, click.y, opts||{});
+        const path = tracePathFromClick(g, click.x, click.y);
         self.postMessage({ type:'tracePath:result', id, path });
         break;
       }
-
- main
       case 'detectLine': {
         const { roi, click } = msg; // roi: {data,width,height,rx,ry}
         const imgData = new ImageData(new Uint8ClampedArray(roi.data), roi.width, roi.height);
@@ -188,7 +183,6 @@ DevShgOpenCv
     self.postMessage({ type: 'error', error: String(err && err.message || err) });
   }
 };
-DevShgOpenCv
 
 // -------------- Graph building --------------
 function buildWireGraph(srcRGBA){
@@ -301,121 +295,12 @@ function buildGraphFromSkeleton(img, w, h, grayMat){
   return {nodes, edges};
 }
 
-
-function tracePathFromClick(g, x, y, opts){
-  // opts.stopAt: when true, stop at first node with deg != 2 (junction or terminal/symbol)
-  if(!g || !g.edges || !g.edges.length) return null;
-  const snapRadius = 12;
-  let best = null;
-  let bestD = 1e12;
-  let bestIdx = -1;
-  // Find nearest edge polyline point
-  for(let ei=0; ei<g.edges.length; ei++){
-    const e = g.edges[ei];
-    const pts = e.points || [];
-    for(let i=0;i<pts.length;i++){
-      const dx = pts[i].x - x, dy = pts[i].y - y;
-      const d = Math.hypot(dx, dy);
-      if(d < bestD){ bestD = d; best = {ei, i}; }
-    }
-  }
-  if(!best || bestD > snapRadius) return null;
-  const e0 = g.edges[best.ei];
-  const i0 = best.i;
-  const path = [];
-  // Helper to push a segment of points in [iStart..iEnd] inclusive
-  const pushSegment = (pts, iStart, iEnd) => {
-    if(iStart <= iEnd){
-      for(let i=iStart;i<=iEnd;i++) path.push({x:pts[i].x|0, y:pts[i].y|0});
-    } else {
-      for(let i=iStart;i>=iEnd;i--) path.push({x:pts[i].x|0, y:pts[i].y|0});
-    }
-  };
-  // Build adjacency if missing
-  if(!g.adj){
-    g.adj = new Map();
-    for(let i=0;i<g.nodes.length;i++) g.adj.set(i, []);
-    for(let ei=0;ei<g.edges.length;ei++){
-      const e = g.edges[ei];
-      g.adj.get(e.a).push(ei);
-      g.adj.get(e.b).push(ei);
-    }
-  }
-  const stopAt = !!(opts && opts.stopAt);
-  // Determine which endpoint node is closer along the polyline from click
-  const toA = i0; // distance in indices to start
-  const toB = (e0.points.length-1) - i0; // to end
-  const dirFirst = (toA <= toB) ? 'A' : 'B';
-  const visit = new Set();
-
-  function nodeDeg(nodeId){
-    const n = g.nodes[nodeId]; return (n && typeof n.deg==='number') ? n.deg : (g.adj.get(nodeId)||[]).length;
-  }
-
-  function walkFromEdge(ei, toward){ // toward: 'A' or 'B'
-    let e = g.edges[ei];
-    let pts = e.points;
-    if(toward === 'A'){
-      pushSegment(pts, i0, 0);
-      var nodeId = e.a;
-    } else {
-      pushSegment(pts, i0, pts.length-1);
-      var nodeId = e.b;
-    }
-    // If not stopping, return full line in that direction (continue through deg==2 nodes)
-    while(true){
-      if(!stopAt){
-        // Continue until dead end collecting points through degree-2 nodes
-        const edgesAtNode = (g.adj.get(nodeId) || []).filter(k=>k!==ei);
-        if(edgesAtNode.length!==1) break; // junction or end
-        const nextEi = edgesAtNode[0];
-        if(visit.has(nextEi)) break;
-        visit.add(nextEi);
-        const next = g.edges[nextEi];
-        const forward = (next.a===nodeId) ? 'B' : 'A';
-        const ptsN = next.points;
-        if(forward==='B'){ pushSegment(ptsN, 0, ptsN.length-1); nodeId = next.b; }
-        else { pushSegment(ptsN, ptsN.length-1, 0); nodeId = next.a; }
-        ei = nextEi;
-        continue;
-      } else {
-        // stopAt=true: stop when encountering first node with deg != 2
-        const deg = nodeDeg(nodeId);
-        if(deg !== 2) break;
-        const edgesAtNode = (g.adj.get(nodeId) || []).filter(k=>k!==ei);
-        if(edgesAtNode.length!==1) break;
-        const nextEi = edgesAtNode[0];
-        if(visit.has(nextEi)) break;
-        visit.add(nextEi);
-        const next = g.edges[nextEi];
-        const nextForward = (next.a===nodeId) ? 'B' : 'A';
-        const ptsN = next.points;
-        if(nextForward==='B'){ pushSegment(ptsN, 0, ptsN.length-1); nodeId = next.b; }
-        else { pushSegment(ptsN, ptsN.length-1, 0); nodeId = next.a; }
-        ei = nextEi;
-        continue;
-      }
-    }
-  }
-
-  // Walk both directions and merge (but avoid duplicating the starting point twice)
-  walkFromEdge(best.ei, dirFirst);
-  const len1 = path.length;
-  // reset starting index for opposite direction
-  walkFromEdge(best.ei, dirFirst==='A'?'B':'A');
-  // Deduplicate consecutive identical points
-  const dedup = [];
-  for(let i=0;i<path.length;i++){
-    if(i===0 || path[i].x!==path[i-1].x || path[i].y!==path[i-1].y){
-      dedup.push(path[i]);
-    }
-  }
-  return dedup.length>=2 ? dedup : null;
-}
-for(const e of graph.edges){ const pts=e.points; for(let i=0;i<pts.length-1;i++){ const d=distToSeg(x,y, pts[i].x,pts[i].y, pts[i+1].x,pts[i+1].y); if(d<bestD){ bestD=d; best=e } } }
+function tracePathFromClick(graph, x, y){
+  // Find nearest edge polyline to (x,y) and return full edge path as points
+  let best=null; let bestD=1e12;
+  function distToSeg(px,py, x1,y1,x2,y2){ const vx=x2-x1, vy=y2-y1; const wx=px-x1, wy=py-y1; const c1=vx*wx+vy*wy; if(c1<=0) return Math.hypot(px-x1,py-y1); const c2=vx*vx+vy*vy; if(c2<=c1) return Math.hypot(px-x2,py-y2); const t=c1/c2; const rx=x1+t*vx, ry=y1+t*vy; return Math.hypot(px-rx,py-ry); }
+  for(const e of graph.edges){ const pts=e.points; for(let i=0;i<pts.length-1;i++){ const d=distToSeg(x,y, pts[i].x,pts[i].y, pts[i+1].x,pts[i+1].y); if(d<bestD){ bestD=d; best=e } } }
   if(!best) return null;
   // Return path from a to b (full edge). Caller can downsample or map to world coords.
   return best.points;
 }
-
- main
