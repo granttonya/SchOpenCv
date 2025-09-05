@@ -71,14 +71,21 @@
         <div class="row"><button id="cv-deskew" class="btn">Auto Deskew</button></div>
         <div class="row"><button id="cv-denoise" class="btn">Denoise</button></div>
          <div class="row"><button id="cv-adapt" class="btn">Adaptive Threshold</button></div>
+         <div class="row"><button id="cv-text" class="btn">Text Enhance</button></div>
+         <div class="row key-val"><div class="key">Text strength</div><div class="value"><input id="cv-text-strength" type="range" min="0" max="3" step="1" value="2"></div></div>
+         <div class="row key-val"><div class="key">Thicken text</div><div class="value"><input id="cv-text-thicken" type="range" min="0" max="2" step="1" value="1"></div></div>
+         <div class="row"><label><input id="cv-text-upscale" type="checkbox" checked> Upscale x2 for text</label></div>
          <div class="row"><button id="cv-autoclean" class="btn">Auto Clean</button></div>
          <div class="row"><button id="cv-auto" class="btn">Auto Clean + Redraw</button></div>
 <div class="row"><button id="cv-export-svg" class="btn">Export SVG</button></div>
-<div class="row key-val"><div class="key">Preview</div><div class="value"><label><input id="cv-preview" type="checkbox"> Vector overlay</label></div></div>
-<div class="row key-val"><div class="key">Simplify</div><div class="value"><input id="cv-simplify" type="range" min="0" max="2" step="0.1" value="1"></div></div>
-<div class="row key-val"><div class="key">Snap</div><div class="value"><label><input id="cv-snap" type="checkbox" checked> Snap H/V</label></div></div>
-<div class="row key-val"><div class="key">Stroke</div><div class="value"><input id="cv-stroke" type="range" min="0.5" max="6" step="0.5" value="2"></div></div>
-<div class="row key-val"><div class="key">Color</div><div class="value"><input id="cv-color" type="color" value="#00aaff"></div></div>
+<div class="row"><button id="btn-export-png" class="btn">Export PNG</button></div>
+<div class="row key-val"><div class="key">PNG export</div><div class="value"><label><input id="export-merge" type="checkbox" checked> Include overlay</label></div></div>
+         <div class="row"><label><input id="cv-ignore-text" type="checkbox" checked> Exclude text from vectorization</label></div>
+         <div class="row key-val"><div class="key">Preview</div><div class="value"><label><input id="cv-preview" type="checkbox"> Vector overlay</label></div></div>
+         <div class="row key-val"><div class="key">Simplify</div><div class="value"><input id="cv-simplify" type="range" min="0" max="2" step="0.1" value="1"></div></div>
+         <div class="row key-val"><div class="key">Snap</div><div class="value"><label><input id="cv-snap" type="checkbox" checked> Snap H/V</label></div></div>
+         <div class="row key-val"><div class="key">Stroke</div><div class="value"><input id="cv-stroke" type="range" min="0.5" max="6" step="0.5" value="2"></div></div>
+         <div class="row key-val"><div class="key">Color</div><div class="value"><input id="cv-color" type="color" value="#00aaff"></div></div>
 <div class="row key-val"><div class="key">Bridge gaps</div><div class="value"><input id="cv-bridge" type="range" min="0" max="5" step="1" value="1"></div></div>
          <div class="row"><button id="cv-reset" class="btn warn">Reset CV</button></div>
          <div class="row"><button id="cv-reload" class="btn">Reset cache &amp; reload</button></div>
