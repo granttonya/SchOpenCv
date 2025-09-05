@@ -54,6 +54,8 @@ class PageImage {
       unit: 'in', // in, cm, mm
       pixelsPerUnit: 10,
     };
+    this.vectorOverlayUrl = null; // object URL for SVG preview
+    this.vectorOverlayOpts = null;
   }
 }
 
@@ -87,6 +89,10 @@ class Viewer extends Emitter {
     this.overlay.className = 'overlay';
     this.wrap.appendChild(this.canvas);
     this.wrap.appendChild(this.overlay);
+    this.svgLayer = document.createElement('img');
+    this.svgLayer.className = 'vector-overlay';
+    Object.assign(this.svgLayer.style, { position:'absolute', left:'0', top:'0', pointerEvents:'none', display:'none' });
+    this.wrap.appendChild(this.svgLayer);
     this.ctx = this.canvas.getContext('2d', { alpha:false, desynchronized:true });
     this.octx = this.overlay.getContext('2d');
     this.w = this.h = 0;
@@ -144,6 +150,13 @@ class Viewer extends Emitter {
     const dw = img.width * scale; const dh = img.height * scale;
     this.ctx.imageSmoothingEnabled = false;
     this.ctx.drawImage(img, 0,0,img.width,img.height, x,y,dw,dh);
+    // Position vector SVG overlay if present
+    if(this.svgLayer && this.svgLayer.style.display!=='none'){
+      this.svgLayer.style.width = img.width + 'px';
+      this.svgLayer.style.height = img.height + 'px';
+      this.svgLayer.style.transformOrigin = '0 0';
+      this.svgLayer.style.transform = `translate(${x}px,${y}px) scale(${scale})`;
+    }
     // Grid (optional subtle)
     this._drawGrid();
     // Annotations overlay
@@ -357,6 +370,7 @@ function convolveSharpen(ctx, w, h, amount){
           btn.disabled = wasDisabled;
           this._setStatusTask('Ready');
           this._debug('btn:cv-auto:done',{});
+          try{ if(this.cvPreview?.checked) this._buildAndShowVectorOverlay(); }catch(_){ }
         }
       });
     }
@@ -526,6 +540,13 @@ class AppUI {
     this.cvLoad=$$('#cv-load'); this.cvDeskew=$$('#cv-deskew'); this.cvDenoise=$$('#cv-denoise'); this.cvAdapt=$$('#cv-adapt'); this.cvReset=$$('#cv-reset');
     this.cvAutoClean=$$('#cv-autoclean');
     this.cvAuto=$$('#cv-auto');
+    this.cvExport=$$('#cv-export-svg');
+    this.cvPreview=$$('#cv-preview');
+    this.cvSimplify=$$('#cv-simplify');
+    this.cvSnap=$$('#cv-snap');
+    this.cvStroke=$$('#cv-stroke');
+    this.cvColor=$$('#cv-color');
+    this.cvBridge=$$('#cv-bridge');
     const need=async()=>{ if(window.cvWorker && window.cvWorkerReady) return true; try{ await loadOpenCV(this.cvLoad) ; return true }catch(e){ alert('Failed to load OpenCV'); return false } };
     this.cvLoad.addEventListener('click', async()=>{ this._debug('btn:cv-load:click',{}); await this._withBusy(this.cvLoad, async()=>{ await need(); this._debug('btn:cv-load:done',{ready:!!(window.cvWorker&&window.cvWorkerReady)}); }) });
     this.cvDeskew.addEventListener('click', async()=>{ this._debug('btn:cv-deskew:click',{}); await this._withCvProgress(this.cvDeskew, 'deskew', async(reqId)=>{ if(await need()){ await this._cvDeskew(reqId); this._debug('btn:cv-deskew:done',{reqId}); } }) });
@@ -563,9 +584,48 @@ class AppUI {
           btn.disabled = wasDisabled;
           this._setStatusTask('Ready');
           this._debug('btn:cv-autoclean:done',{});
+          try{ if(this.cvPreview?.checked) this._buildAndShowVectorOverlay(); }catch(_){ }
         }
       });
     }
+
+    if(this.cvExport){
+      this.cvExport.addEventListener('click', async()=>{
+        this._debug('btn:cv-export-svg:click',{});
+        const p=this.state.page; if(!p){ this._toast('No page to export','error'); return }
+        // Ensure graph exists based on current processed/cv canvas
+        try{ await this._cvEnsureGraphBuilt(p); }catch(_){ /* try to load and retry */ try{ await need(); await this._cvEnsureGraphBuilt(p); }catch(e){ this._toast('Failed to prepare graph for export','error'); return } }
+        const btn=this.cvExport; const wasDisabled=!!btn.disabled; btn.classList.add('loading'); btn.disabled=true;
+        const w=window.cvWorker; if(!(w&&window.cvWorkerReady)){ this._toast('OpenCV worker not ready','error'); btn.classList.remove('loading'); btn.disabled=wasDisabled; return }
+        const onMsg=(ev)=>{
+          const d=ev.data||{}; if(d.type==='exportSVG:result' && d.id===p.id){
+            try{ w.removeEventListener('message', onMsg) }catch(_){ }
+            try{
+              const blob = new Blob([d.svg||''], {type:'image/svg+xml'});
+              const url = URL.createObjectURL(blob);
+              const name = (p.name||'page')+'.svg';
+              const a=document.createElement('a'); a.href=url; a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url), 5000);
+              this._debug('export:svg:done',{bytes:(d.svg||'').length});
+            }finally{ btn.classList.remove('loading'); btn.disabled=wasDisabled; }
+          }
+        };
+        w.addEventListener('message', onMsg);
+        const stroke = this.cvColor?.value || '#000';
+        const strokeWidth = parseFloat(this.cvStroke?.value||'2')||2;
+        const simplify = parseFloat(this.cvSimplify?.value||'1')||1;
+        const snap = this.cvSnap?.checked ? 1 : 0;
+        w.postMessage({ type:'exportSVG', id:p.id, options:{ simplify, snap, stroke, strokeWidth } });
+      });
+    }
+
+    // Vector preview overlay controls
+    const regenOverlay = async()=>{ if(!this.cvPreview?.checked) { this._setVectorOverlay(null); return; } await this._buildAndShowVectorOverlay(); };
+    this.cvPreview && this.cvPreview.addEventListener('change', regenOverlay);
+    this.cvSimplify && this.cvSimplify.addEventListener('input', ()=>{ if(this.cvPreview?.checked) { this._buildAndShowVectorOverlay(); } });
+    this.cvSnap && this.cvSnap.addEventListener('change', ()=>{ if(this.cvPreview?.checked) { this._buildAndShowVectorOverlay(); } });
+    this.cvStroke && this.cvStroke.addEventListener('input', ()=>{ if(this.cvPreview?.checked) { this._buildAndShowVectorOverlay(); } });
+    this.cvColor && this.cvColor.addEventListener('input', ()=>{ if(this.cvPreview?.checked) { this._buildAndShowVectorOverlay(); } });
+    this.cvBridge && this.cvBridge.addEventListener('input', ()=>{ if(this.cvPreview?.checked) { this._buildAndShowVectorOverlay(); } });
   }
   _renderLayers(){
     const p=this.state.page; const list=this.layersList; const activeSel=this.layerActive; list.innerHTML=''; activeSel.innerHTML='';
@@ -653,6 +713,39 @@ class AppUI {
   _setupHelp(){
     this.help=$$('.help'); $$('#btn-help').addEventListener('click',()=>this.help.classList.toggle('show'));
   }
+  _setVectorOverlay(url){
+    const p=this.state.page; if(!p) return;
+    // Revoke previous
+    try{ if(p.vectorOverlayUrl && p.vectorOverlayUrl!==url) URL.revokeObjectURL(p.vectorOverlayUrl) }catch(_){ }
+    p.vectorOverlayUrl = url||null;
+    if(url){ this.viewer.svgLayer.src = url; this.viewer.svgLayer.style.display='block'; this.viewer.requestRender(); }
+    else { this.viewer.svgLayer.removeAttribute('src'); this.viewer.svgLayer.style.display='none'; this.viewer.requestRender(); }
+  }
+  async _buildAndShowVectorOverlay(){
+    const p=this.state.page; if(!p) return; const w=window.cvWorker;
+    if(!(w&&window.cvWorkerReady)){ try{ await loadOpenCV(this.cvLoad) }catch(e){ this._toast('OpenCV not ready','error'); return } }
+    await this._cvEnsureGraphBuilt(p);
+    const simplify = parseFloat(this.cvSimplify?.value||'1')||1;
+    const snap = this.cvSnap?.checked ? 1 : 0;
+    return new Promise((resolve)=>{
+      const onMsg=(ev)=>{
+        const d=ev.data||{}; if(d.type==='exportSVG:result' && d.id===p.id){
+          try{ w.removeEventListener('message', onMsg) }catch(_){ }
+          try{
+            const blob = new Blob([d.svg||''], {type:'image/svg+xml'});
+            const url = URL.createObjectURL(blob);
+            this._setVectorOverlay(url);
+            this._debug('preview:vector:ready', { bytes:(d.svg||'').length, simplify, snap });
+          }catch(_){ }
+          resolve();
+        }
+      };
+      w.addEventListener('message', onMsg);
+      const stroke = this.cvColor?.value || '#00aaff';
+      const strokeWidth = parseFloat(this.cvStroke?.value||'2')||2;
+      w.postMessage({ type:'exportSVG', id:p.id, options:{ simplify, snap, stroke, strokeWidth } });
+    });
+  }
   _setupDebugPanel(){
     this.debugPanel = $$('#debug-panel'); this.debugMemo = $$('#debug-memo'); this.debugCopy=$$('#debug-copy'); this.debugClear=$$('#debug-clear');
     if(this.debugCopy) this.debugCopy.addEventListener('click', ()=>{ try{ this.debugMemo.select(); document.execCommand('copy'); this._toast('Copied debug memo','ok') }catch(_){ navigator.clipboard?.writeText(this.debugMemo.value).then(()=>this._toast('Copied debug memo','ok')) } });
@@ -697,6 +790,8 @@ class AppUI {
     this.viewer.requestRender = this.viewer.requestRender.bind(this.viewer);
     const origZoomAt = this.viewer.zoomAt.bind(this.viewer);
     this.viewer.zoomAt = (...args)=>{ origZoomAt(...args); refresh() };
+    // When current page changes, update image and vector overlay
+    this.state.on('current', ()=>{ this.viewer.setImage(this.state.page); if(this.cvPreview?.checked){ this._buildAndShowVectorOverlay(); } else { this._setVectorOverlay(null); } refresh(); this._refreshThumbs() });
   }
   _refreshStatus(){ const v=this.viewer; this.statusZoom.textContent = `${(v.state.scale*100)|0}%`; this.statusPage.textContent=this.state.page?`${this.state.current+1}/${this.state.pages.length}`:'0/0' }
   _refreshRight(){ this._renderLayers(); }
@@ -762,6 +857,8 @@ class AppUI {
     // Invalidate wire graph when visuals change
     p._graphReady=false; p._graphStamp='';
     if(p===this.state.page) this.viewer.requestRender(true);
+    // Refresh vector preview if enabled
+    try{ if(this.cvPreview?.checked) { await this._cvEnsureGraphBuilt(p); await this._buildAndShowVectorOverlay(); } }catch(_){ }
   }
   _updateScale(){
     const p=this.state.page; if(!p) return;
@@ -1209,12 +1306,13 @@ AppUI.prototype._cvEnsureGraphBuilt = async function(page){
   if(!(window.cvWorker && window.cvWorkerReady)) return false;
   const src = p.processedCanvas || p.cvCanvas || this._sourceCanvas();
   const c = src; if(!c) return false; const ctx=c.getContext('2d'); const img=ctx.getImageData(0,0,c.width,c.height);
-  const stamp = `${c.width}x${c.height}:${(p.processedCanvas?1:0)}:${(p.cvCanvas?1:0)}:${p.enhance.brightness},${p.enhance.contrast},${p.enhance.threshold},${p.enhance.sharpen},${p.enhance.invert?1:0},${p.enhance.grayscale?1:0}`;
+  const bridge = parseInt(this.cvBridge?.value||'1')|0;
+  const stamp = `${c.width}x${c.height}:${(p.processedCanvas?1:0)}:${(p.cvCanvas?1:0)}:${p.enhance.brightness},${p.enhance.contrast},${p.enhance.threshold},${p.enhance.sharpen},${p.enhance.invert?1:0},${p.enhance.grayscale?1:0}:bridge=${bridge}`;
   if(p._graphStamp === stamp && p._graphReady){ return true }
   return new Promise((resolve)=>{
     const w=window.cvWorker; const onMsg=(ev)=>{ const d=ev.data||{}; if(d.type==='buildGraph:result' && d.id===p.id){ w.removeEventListener('message', onMsg); p._graphReady=true; p._graphStamp=stamp; resolve(true) } };
     w.addEventListener('message', onMsg);
-    w.postMessage({ type:'buildGraph', id:p.id, image:{ data:new Uint8ClampedArray(img.data), width:c.width, height:c.height } });
+    w.postMessage({ type:'buildGraph', id:p.id, options:{ bridge }, image:{ data:new Uint8ClampedArray(img.data), width:c.width, height:c.height } });
   });
 }
 

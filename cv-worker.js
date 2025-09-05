@@ -189,8 +189,8 @@ self.onmessage = async (e) => {
     if (!ready) { await loadCV(); }
     switch (msg.type) {
       case 'buildGraph': {
-        const { id, image } = msg;
-        const graph = buildWireGraph(image);
+        const { id, image, options } = msg;
+        const graph = buildWireGraph(image, options||{});
         graphs.set(id, graph);
         self.postMessage({ type: 'buildGraph:result', id });
         break;
@@ -231,6 +231,17 @@ self.onmessage = async (e) => {
         self.postMessage({ type: 'adaptive:result', reqId, image: out }, [out.data]);
         break;
       }
+      case 'exportSVG': {
+        const { id, options } = msg;
+        let g = graphs.get(id);
+        if(!g){
+          // As a fallback, try to build from provided image if present
+          if(msg.image){ g = buildWireGraph(msg.image, options||{}); } else { self.postMessage({ type:'exportSVG:result', id, svg:'' }); break; }
+        }
+        const svg = graphToSVG(g, options||{});
+        self.postMessage({ type:'exportSVG:result', id, svg });
+        break;
+      }
     }
   } catch (err) {
     self.postMessage({ type: 'error', error: String(err && err.message || err) });
@@ -238,7 +249,7 @@ self.onmessage = async (e) => {
 };
 
 // -------------- Graph building --------------
-function buildWireGraph(srcRGBA){
+function buildWireGraph(srcRGBA, options){
   // Returns {w,h, nodes:[{id,x,y,type,deg}], edges:[{a,b,points:[{x,y}]}]}
   const mat = toMatRGBA(srcRGBA);
   try{
@@ -253,18 +264,78 @@ function buildWireGraph(srcRGBA){
     cv.morphologyEx(bin, o1, cv.MORPH_OPEN, kH);
     cv.morphologyEx(bin, o2, cv.MORPH_OPEN, kV);
     const wires = new cv.Mat(); cv.bitwise_or(o1, o2, wires);
+    // Bridge small gaps with a configurable close to improve continuity
+    const bridge = Math.max(0, Math.min(8, (options && options.bridge)|0));
+    let closed = new cv.Mat();
+    if(bridge>0){
+      const kSize = 1 + 2*bridge; // 1->1x1(nop), 1->3x3, 2->5x5, ...
+      const kC = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(kSize,kSize));
+      cv.morphologyEx(wires, closed, cv.MORPH_CLOSE, kC);
+    } else {
+      closed = wires.clone();
+    }
     // Convert to 0/1 bitmap and thin
-    const w = wires.cols, h = wires.rows; const bytes = new Uint8Array(w*h);
+    const w = closed.cols, h = closed.rows; const bytes = new Uint8Array(w*h);
     for(let y=0; y<h; y++){
       for(let x=0; x<w; x++){
-        bytes[y*w+x] = wires.ucharPtr(y,x)[0] ? 1 : 0;
+        bytes[y*w+x] = closed.ucharPtr(y,x)[0] ? 1 : 0;
       }
     }
     zhangSuenThin(bytes, w, h);
     const {nodes, edges} = buildGraphFromSkeleton(bytes, w, h, gray);
-    gray.delete(); bin.delete(); o1.delete(); o2.delete(); wires.delete();
+    gray.delete(); bin.delete(); o1.delete(); o2.delete(); wires.delete(); closed.delete();
     return { w, h, nodes, edges };
   } finally { mat.delete(); }
+}
+
+// --- SVG export helpers ---
+function rdp(points, epsilon){
+  if(!points || points.length<=2) return points||[];
+  const sq = (x)=>x*x; const distSq=(p,a,b)=>{
+    const t=((p.x-a.x)*(b.x-a.x)+(p.y-a.y)*(b.y-a.y))/Math.max(1e-9, sq(b.x-a.x)+sq(b.y-a.y));
+    const u=Math.max(0,Math.min(1,t)); const x=a.x+u*(b.x-a.x), y=a.y+u*(b.y-a.y); return sq(p.x-x)+sq(p.y-y);
+  };
+  const simplify=(pts,eps2)=>{
+    const keep=new Array(pts.length).fill(false); keep[0]=keep[pts.length-1]=true;
+    const stack=[[0,pts.length-1]];
+    while(stack.length){ const [s,e]=stack.pop(); let maxD=0, idx=-1; for(let i=s+1;i<e;i++){ const d=distSq(pts[i], pts[s], pts[e]); if(d>maxD){ maxD=d; idx=i; } }
+      if(maxD>eps2){ keep[idx]=true; stack.push([s,idx],[idx,e]); }
+    }
+    return pts.filter((_,i)=>keep[i]);
+  };
+  return simplify(points, (epsilon||0.75)*(epsilon||0.75));
+}
+
+function snapHV(points){
+  if(!points || points.length<2) return points||[];
+  let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity; points.forEach(p=>{ if(p.x<minX)minX=p.x; if(p.x>maxX)maxX=p.x; if(p.y<minY)minY=p.y; if(p.y>maxY)maxY=p.y; });
+  const rangeX=maxX-minX, rangeY=maxY-minY;
+  if(rangeX>rangeY){ // horizontal-ish
+    const ys=points.map(p=>p.y).sort((a,b)=>a-b); const y=ys[Math.floor(ys.length/2)]|0; return points.map(p=>({x:p.x|0, y}));
+  } else { // vertical-ish
+    const xs=points.map(p=>p.x).sort((a,b)=>a-b); const x=xs[Math.floor(xs.length/2)]|0; return points.map(p=>({x, y:p.y|0}));
+  }
+}
+
+function graphToSVG(graph, options){
+  const w = graph.w|0, h = graph.h|0;
+  const stroke = options?.stroke || '#000';
+  const strokeWidth = options?.strokeWidth || 1;
+  const simplify = (options?.simplify ?? 1) || 0; // px
+  const doSnap = options?.snap ? true : false;
+  const parts=[];
+  parts.push(`<?xml version="1.0" encoding="UTF-8"?>`);
+  parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" stroke="${stroke}" fill="none" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round">`);
+  parts.push(`<g id="wires">`);
+  for(const e of graph.edges||[]){
+    let pts=e.points||[]; if(pts.length<2) continue;
+    if(doSnap) pts = snapHV(pts);
+    if(simplify>0) pts = rdp(pts, simplify);
+    const d = pts.map((p,i)=> (i?`L${p.x|0},${p.y|0}`:`M${p.x|0},${p.y|0}`)).join(' ');
+    parts.push(`<path d="${d}"/>`);
+  }
+  parts.push(`</g></svg>`);
+  return parts.join('');
 }
 
 function zhangSuenThin(img, w, h){
