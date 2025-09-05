@@ -34,21 +34,60 @@ function loadCV() {
 
 function toMatRGBA(image) {
   // image: {data:ArrayBuffer,width,height}
-  const imgData = new ImageData(new Uint8ClampedArray(image.data), image.width, image.height);
+  const w = image.width|0, h = image.height|0;
+  if (!(w>0 && h>0)) { throw new Error('Invalid image size'); }
+  const expected = w * h * 4;
+  let arr;
+  const src = image && image.data;
+  if (!src) throw new Error('Invalid image buffer');
+  if (ArrayBuffer.isView(src)) {
+    // src is a TypedArray view
+    const view = src; // expect Uint8ClampedArray or Uint8Array
+    const inLen = view.byteLength|0;
+    if (inLen >= expected) {
+      arr = new Uint8ClampedArray(view.buffer, view.byteOffset, expected);
+    } else {
+      arr = new Uint8ClampedArray(expected);
+      try { arr.set(new Uint8ClampedArray(view.buffer, view.byteOffset, Math.min(inLen, expected))); } catch (_) {}
+    }
+  } else if (src instanceof ArrayBuffer) {
+    const inLen = src.byteLength|0;
+    if (inLen >= expected) {
+      arr = new Uint8ClampedArray(src, 0, expected);
+    } else {
+      arr = new Uint8ClampedArray(expected);
+      try { arr.set(new Uint8ClampedArray(src, 0, Math.min(inLen, expected))); } catch (_) {}
+    }
+  } else {
+    throw new Error('Invalid image buffer');
+  }
+  let imgData;
+  try{
+    imgData = new ImageData(arr, w, h);
+  }catch(e){
+    // Re-throw with more context
+    let inLen = 0, bo=0, bbl=0;
+    try{
+      if (ArrayBuffer.isView(src)) { inLen = src.byteLength|0; bo = src.byteOffset|0; bbl = src.buffer?.byteLength|0; }
+      else if (src instanceof ArrayBuffer) { inLen = src.byteLength|0; bbl = src.byteLength|0; }
+    }catch(_){ }
+    throw new Error(`toMatRGBA failed: ${w}x${h} expected=${expected} srcLen=${inLen} bo=${bo} bufLen=${bbl} arrLen=${arr?.length}|${arr?.byteLength} cause=${e?.message||e}`);
+  }
   return cv.matFromImageData(imgData);
 }
 
 function matToImagePayload(mat) {
   const w = mat.cols, h = mat.rows;
-  const out = new cv.Mat();
-  if (mat.type() !== cv.CV_8UC4) {
-    cv.cvtColor(mat, out, cv.COLOR_RGBA2RGBA, 0);
+  let rgba;
+  if (mat.type() === cv.CV_8UC4) {
+    rgba = mat.clone();
   } else {
-    out.data.set(mat.data);
+    rgba = new cv.Mat();
+    cv.cvtColor(mat, rgba, cv.COLOR_RGBA2RGBA, 0);
   }
-  const buf = new Uint8ClampedArray(out.data); // copy view
+  const buf = new Uint8ClampedArray(rgba.data);
   const payload = { data: buf.buffer, width: w, height: h };
-  out.delete();
+  rgba.delete();
   return payload;
 }
 
@@ -85,10 +124,12 @@ function detectLineInROI(roiMat, rx, ry, clickX, clickY) {
   return (best && bestD <= 12) ? best : null;
 }
 
-function opDeskew(srcRGBA) {
+function opDeskew(srcRGBA, report) {
   const src = toMatRGBA(srcRGBA);
   try {
+    if(report) report(10);
     const gray = new cv.Mat(); cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+    if(report) report(30);
     const edges = new cv.Mat(); cv.Canny(gray, edges, 50, 150, 3, false);
     const lines = new cv.Mat(); cv.HoughLinesP(edges, lines, 1, Math.PI / 180, 100, 100, 10);
     let angles = [];
@@ -97,6 +138,7 @@ function opDeskew(srcRGBA) {
       const a = Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI;
       if (Math.abs(a) <= 20 || Math.abs(90 - Math.abs(a)) <= 20) angles.push(a);
     }
+    if(report) report(55);
     let angle = 0; if (angles.length) { angles.sort((a, b) => a - b); angle = angles[Math.floor(angles.length / 2)]; }
     if (Math.abs(angle) > 45) angle = (angle > 0 ? 90 : -90) - angle;
     const center = new cv.Point(src.cols / 2, src.rows / 2);
@@ -104,25 +146,33 @@ function opDeskew(srcRGBA) {
     const dst = new cv.Mat(); const size = new cv.Size(src.cols, src.rows);
     cv.warpAffine(src, dst, M, size, cv.INTER_LINEAR, cv.BORDER_REPLICATE, new cv.Scalar());
     const payload = matToImagePayload(dst);
+    if(report) report(100);
     gray.delete(); edges.delete(); lines.delete(); dst.delete(); M.delete();
     return payload;
   } finally { src.delete(); }
 }
 
-function opDenoise(srcRGBA) {
+function opDenoise(srcRGBA, report) {
   const src = toMatRGBA(srcRGBA);
   try {
-    const dst = new cv.Mat(); cv.medianBlur(src, dst, 3); const payload = matToImagePayload(dst); dst.delete(); return payload;
+    if(report) report(20);
+    const dst = new cv.Mat(); cv.medianBlur(src, dst, 3);
+    const payload = matToImagePayload(dst);
+    if(report) report(100);
+    dst.delete(); return payload;
   } finally { src.delete(); }
 }
 
-function opAdaptive(srcRGBA) {
+function opAdaptive(srcRGBA, report) {
   const src = toMatRGBA(srcRGBA);
   try {
+    if(report) report(15);
     const gray = new cv.Mat(); cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+    if(report) report(45);
     const dst = new cv.Mat(); cv.adaptiveThreshold(gray, dst, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 15, 10);
     const rgba = new cv.Mat(); cv.cvtColor(dst, rgba, cv.COLOR_GRAY2RGBA, 0);
     const payload = matToImagePayload(rgba);
+    if(report) report(100);
     gray.delete(); dst.delete(); rgba.delete();
     return payload;
   } finally { src.delete(); }
@@ -164,18 +214,21 @@ self.onmessage = async (e) => {
         break;
       }
       case 'deskew': {
-        const out = opDeskew(msg.image);
-        self.postMessage({ type: 'deskew:result', image: out }, [out.data]);
+        const { reqId } = msg;
+        const out = opDeskew(msg.image, (v)=> self.postMessage({ type:'progress', op:'deskew', reqId, value: v }));
+        self.postMessage({ type: 'deskew:result', reqId, image: out }, [out.data]);
         break;
       }
       case 'denoise': {
-        const out = opDenoise(msg.image);
-        self.postMessage({ type: 'denoise:result', image: out }, [out.data]);
+        const { reqId } = msg;
+        const out = opDenoise(msg.image, (v)=> self.postMessage({ type:'progress', op:'denoise', reqId, value: v }));
+        self.postMessage({ type: 'denoise:result', reqId, image: out }, [out.data]);
         break;
       }
       case 'adaptive': {
-        const out = opAdaptive(msg.image);
-        self.postMessage({ type: 'adaptive:result', image: out }, [out.data]);
+        const { reqId } = msg;
+        const out = opAdaptive(msg.image, (v)=> self.postMessage({ type:'progress', op:'adaptive', reqId, value: v }));
+        self.postMessage({ type: 'adaptive:result', reqId, image: out }, [out.data]);
         break;
       }
     }
