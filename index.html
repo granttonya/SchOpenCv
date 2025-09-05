@@ -71,7 +71,11 @@
         <div class="row"><button id="cv-deskew" class="btn">Auto Deskew</button></div>
         <div class="row"><button id="cv-denoise" class="btn">Denoise</button></div>
         <div class="row"><button id="cv-adapt" class="btn">Adaptive Threshold</button></div>
-        <div class="row"><button id="cv-reset" class="btn warn">Reset CV</button></div>
+        <div class="row"><button id="cv-autoclean" class="btn">Auto Clean</button></div>
+        <div class="row"><button id="cv-auto" class="btn">Auto Clean + Redraw</button></div>
+<div class="row"><button id="cv-export-svg" class="btn">Export SVG</button></div>
+<div class="row"><button id="cv-reset" class="btn warn">Reset CV</button></div>
+<div class="row"><button id="cv-reload" class="btn">Reset cache &amp; reload</button></div>
         <div class="muted">First time uses network to load OpenCV. Then cached for offline.</div>
       </div>
 
@@ -103,6 +107,7 @@
     <div class="status">
       <div class="pill">Zoom: <span id="status-zoom">100%</span></div>
       <div class="pill">Page: <span id="status-page">0/0</span></div>
+      <div class="pill" id="status-task">Ready</div>
       <div class="coords">Cursor: <span id="status-pos">x:0 y:0</span></div>
     </div>
   </div>

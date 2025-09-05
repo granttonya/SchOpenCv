@@ -324,6 +324,42 @@ function convolveSharpen(ctx, w, h, amount){
       }
       dst[i+3]=src[c+3];
     }
+
+
+    if(this.cvAuto){
+      this.cvAuto.addEventListener('click', async()=>{
+        this._debug('btn:cv-auto:click',{});
+        if(!await (async()=>{ if(window.cvWorker && window.cvWorkerReady) return true; try{ await loadOpenCV(this.cvLoad); return true }catch(e){ alert('Failed to load OpenCV'); return false } })()) return;
+        const btn=this.cvAuto; const wasDisabled=!!btn.disabled; btn.classList.add('loading','determinate'); btn.disabled=true;
+        const setP=(pct,label)=>{ try{ btn.style.setProperty('--progress', String(pct)); }catch(_){ } this._setStatusTask(`${label}�?� ${Math.round(pct)}%`); };
+        const req1=uuid(), req2=uuid();
+        const onMsg=(ev)=>{
+          const d=ev.data||{}; if(d.type==='progress' && (d.reqId===req1||d.reqId===req2)){
+            let pct=0, label='Auto Clean';
+            if(d.op==='denoise'){ pct = (d.value||0)*0.45; label='Denoising'; }
+            if(d.op==='adaptive'){ pct = 45 + (d.value||0)*0.45; label='Adaptive'; }
+            setP(Math.max(0,Math.min(100,pct)), label);
+          }
+        };
+        window.cvWorker && window.cvWorker.addEventListener('message', onMsg);
+        try{
+          await this._cvDenoise(req1);
+          await this._cvAdaptive(req2);
+          let targetSharp = +this.sharpen.value; if(!targetSharp || targetSharp===0){ targetSharp = 10; this.sharpen.value = targetSharp; this.sharpen.dispatchEvent(new Event('input',{bubbles:true})) }
+          setP(92,'Sharpening');
+          await this._applyEnhancements(this.state.page);
+          try{ await this._cvEnsureGraphBuilt(this.state.page); }catch(_){ }
+          this.viewer && this.viewer.requestRender(true);
+          setP(100,'Done');
+        } finally {
+          try{ window.cvWorker && window.cvWorker.removeEventListener('message', onMsg) }catch(_){ }
+          btn.classList.remove('determinate'); btn.style.removeProperty('--progress'); btn.classList.remove('loading');
+          btn.disabled = wasDisabled;
+          this._setStatusTask('Ready');
+          this._debug('btn:cv-auto:done',{});
+        }
+      });
+    }
   }
   ctx.putImageData(out,0,0);
 }
@@ -488,12 +524,48 @@ class AppUI {
 
     // OpenCV controls
     this.cvLoad=$$('#cv-load'); this.cvDeskew=$$('#cv-deskew'); this.cvDenoise=$$('#cv-denoise'); this.cvAdapt=$$('#cv-adapt'); this.cvReset=$$('#cv-reset');
+    this.cvAutoClean=$$('#cv-autoclean');
+    this.cvAuto=$$('#cv-auto');
     const need=async()=>{ if(window.cvWorker && window.cvWorkerReady) return true; try{ await loadOpenCV(this.cvLoad) ; return true }catch(e){ alert('Failed to load OpenCV'); return false } };
-    this.cvLoad.addEventListener('click', async()=>{ await need() });
-    this.cvDeskew.addEventListener('click', async()=>{ if(await need()) this._cvDeskew() });
-    this.cvDenoise.addEventListener('click', async()=>{ if(await need()) this._cvDenoise() });
-    this.cvAdapt.addEventListener('click', async()=>{ if(await need()) this._cvAdaptive() });
-    this.cvReset.addEventListener('click', ()=>{ const p=this.state.page; if(!p) return; p.cvCanvas=null; this._applyEnhancements(p) });
+    this.cvLoad.addEventListener('click', async()=>{ this._debug('btn:cv-load:click',{}); await this._withBusy(this.cvLoad, async()=>{ await need(); this._debug('btn:cv-load:done',{ready:!!(window.cvWorker&&window.cvWorkerReady)}); }) });
+    this.cvDeskew.addEventListener('click', async()=>{ this._debug('btn:cv-deskew:click',{}); await this._withCvProgress(this.cvDeskew, 'deskew', async(reqId)=>{ if(await need()){ await this._cvDeskew(reqId); this._debug('btn:cv-deskew:done',{reqId}); } }) });
+    this.cvDenoise.addEventListener('click', async()=>{ this._debug('btn:cv-denoise:click',{}); await this._withCvProgress(this.cvDenoise, 'denoise', async(reqId)=>{ if(await need()){ await this._cvDenoise(reqId); this._debug('btn:cv-denoise:done',{reqId}); } }) });
+    this.cvAdapt.addEventListener('click', async()=>{ this._debug('btn:cv-adaptive:click',{}); await this._withCvProgress(this.cvAdapt, 'adaptive', async(reqId)=>{ if(await need()){ await this._cvAdaptive(reqId); this._debug('btn:cv-adaptive:done',{reqId}); } }) });
+    this.cvReset.addEventListener('click', async()=>{ this._debug('btn:cv-reset:click',{}); await this._withBusy(this.cvReset, async()=>{ const p=this.state.page; if(!p){ this._debug('btn:cv-reset:skip',{reason:'no page'}); return; } p.cvCanvas=null; await this._applyEnhancements(p); this._debug('btn:cv-reset:done',{}); }) });
+    if(this.cvAutoClean){
+      this.cvAutoClean.addEventListener('click', async()=>{
+        this._debug('btn:cv-autoclean:click',{});
+        if(!await need()) return;
+        const btn=this.cvAutoClean; const wasDisabled=!!btn.disabled; btn.classList.add('loading','determinate'); btn.disabled=true;
+        const setP=(pct,label)=>{ try{ btn.style.setProperty('--progress', String(pct)); }catch(_){ } this._setStatusTask(`${label}… ${Math.round(pct)}%`); };
+        const req1=uuid(), req2=uuid();
+        const onMsg=(ev)=>{
+          const d=ev.data||{}; if(d.type==='progress' && (d.reqId===req1||d.reqId===req2)){
+            let pct=0, label='Auto Clean';
+            if(d.op==='denoise'){ pct = (d.value||0)*0.45; label='Denoising'; }
+            if(d.op==='adaptive'){ pct = 45 + (d.value||0)*0.45/1; label='Adaptive'; }
+            setP(Math.max(0,Math.min(100,pct)), label);
+          }
+        };
+        window.cvWorker && window.cvWorker.addEventListener('message', onMsg);
+        try{
+          // Denoise -> Adaptive -> Sharpen (if sharpen==0, set to 10)
+          await this._cvDenoise(req1);
+          await this._cvAdaptive(req2);
+          // Sharpen stage
+          let targetSharp = +this.sharpen.value; if(!targetSharp || targetSharp===0){ targetSharp = 10; this.sharpen.value = targetSharp; this.sharpen.dispatchEvent(new Event('input',{bubbles:true})) }
+          setP(92,'Sharpening');
+          await this._applyEnhancements(this.state.page);
+          setP(100,'Done');
+        } finally {
+          try{ window.cvWorker && window.cvWorker.removeEventListener('message', onMsg) }catch(_){ }
+          btn.classList.remove('determinate'); btn.style.removeProperty('--progress'); btn.classList.remove('loading');
+          btn.disabled = wasDisabled;
+          this._setStatusTask('Ready');
+          this._debug('btn:cv-autoclean:done',{});
+        }
+      });
+    }
   }
   _renderLayers(){
     const p=this.state.page; const list=this.layersList; const activeSel=this.layerActive; list.innerHTML=''; activeSel.innerHTML='';
@@ -524,6 +596,39 @@ class AppUI {
     const p=this.state.page; if(!p) return; const name=prompt('New layer name','Layer '+(p.layers.length+1)); if(!name) return;
     const id=uuid(); p.layers.push({id,name,visible:true}); p.activeLayerId=id; this._renderLayers(); this._queueAutosave();
   }
+  // Utility: show a spinner on a button while awaiting task()
+  async _withBusy(button, task){
+    if(!button){ return await task(); }
+    const prevDisabled = !!button.disabled;
+    try{
+      button.classList.add('loading'); button.disabled = true;
+      return await task();
+    } finally {
+      button.classList.remove('loading'); button.disabled = prevDisabled;
+    }
+  }
+  // Status task helper
+  _setStatusTask(text){ try{ if(this.statusTask) this.statusTask.textContent = text }catch(_){ }
+  }
+  // Utility: show determinate CV progress ring by listening to worker 'progress'
+  async _withCvProgress(button, opName, runWithReq){
+    const reqId = uuid();
+    const onMsg = (ev)=>{
+      const d = ev.data||{}; if(d.type==='progress' && d.op===opName && d.reqId===reqId){
+        const v = Math.max(0, Math.min(100, d.value||0));
+        try{ button.classList.add('determinate'); button.style.setProperty('--progress', String(v)); }catch(_){ }
+        this._setStatusTask(opName.charAt(0).toUpperCase()+opName.slice(1) + `… ${v}%`);
+      }
+    };
+    window.cvWorker && window.cvWorker.addEventListener('message', onMsg);
+    try{
+      await this._withBusy(button, async()=>{ await runWithReq(reqId) });
+    } finally {
+      try{ window.cvWorker && window.cvWorker.removeEventListener('message', onMsg); }catch(_){ }
+      try{ button.classList.remove('determinate'); button.style.removeProperty('--progress'); }catch(_){ }
+      this._setStatusTask('Ready');
+    }
+  }
   _renameActiveLayer(){ const p=this.state.page; if(!p) return; const l=p.layers.find(x=>x.id===p.activeLayerId); if(!l) return; const name=prompt('Rename layer', l.name); if(!name) return; l.name=name; this._renderLayers(); this._queueAutosave(); }
   _deleteActiveLayer(){
     const p=this.state.page; if(!p) return; if(p.layers.length<=1){ alert('Cannot delete the last layer.'); return }
@@ -534,7 +639,8 @@ class AppUI {
     p.layers.splice(idx,1); p.activeLayerId=target.id; this._renderLayers(); this.viewer.requestRender(); this._queueAutosave();
   }
   _setupStatus(){
-    this.statusZoom=$$('#status-zoom'); this.statusPos=$$('#status-pos'); this.statusPage=$$('#status-page');
+    this.statusZoom=$$('#status-zoom'); this.statusPos=$$('#status-pos'); this.statusPage=$$('#status-page'); this.statusTask=$$('#status-task');
+    this._setStatusTask('Ready');
     this.viewer.on('pointermove', ({px,py})=>{ this.statusPos.textContent = `x:${px|0} y:${py|0}` });
   }
   _setupDnD(){
@@ -568,6 +674,16 @@ class AppUI {
       try{
         const reason = e.reason; const msg = (reason && reason.message) || String(reason);
         this._debug('unhandledrejection', { message: msg, stack: reason?.stack });
+      }catch(_){ /* noop */ }
+    });
+    // Button click tracer for debugging sticky buttons
+    document.addEventListener('click', (ev)=>{
+      try{
+        const el = ev.target && ev.target.closest && ev.target.closest('button');
+        if(!el) return;
+        const id = el.id || '';
+        if(!(id.startsWith('cv-') || id.startsWith('btn-'))) return;
+        this._debug('click:button', { id, disabled: !!el.disabled, class: el.className||'', text: (el.textContent||'').trim() });
       }catch(_){ /* noop */ }
     });
   }
@@ -623,6 +739,8 @@ class AppUI {
       const el=document.createElement('div'); el.className='thumb'+(idx===this.state.current?' active':'');
       el.innerHTML = `<img alt="${p.name}">${''}<div class="meta"><span>${idx+1}</span><span>${p.bitmap.width}×${p.bitmap.height}</span></div>`;
       const img=el.querySelector('img'); img.src = p.thumbDataUrl || '';
+      const delBtn=document.createElement('button'); delBtn.className='del'; delBtn.title='Delete'; delBtn.textContent='×'; el.appendChild(delBtn);
+      delBtn.addEventListener('click', (e)=>{ e.stopPropagation(); const ok=confirm('Delete this page?'); if(!ok) return; this.state.removePage(p.id); });
       el.addEventListener('click', ()=>this.state.setCurrent(idx));
       wrap.appendChild(el);
     });
@@ -778,7 +896,7 @@ class AppUI {
         const d=ev.data||{}; if(d.type==='detectLine:result'){ window.cvWorker.removeEventListener('message', onMsg); resolve(d.seg||null) }
       };
       window.cvWorker.addEventListener('message', onMsg);
-      window.cvWorker.postMessage({ type:'detectLine', roi:{ data:imgData.data.buffer, width:rw, height:rh, rx, ry }, click:{x:px,y:py} }, [imgData.data.buffer]);
+      window.cvWorker.postMessage({ type:'detectLine', roi:{ data:imgData.data.buffer, width:rw, height:rh, rx, ry }, click:{x:px,y:py} });
     });
   }
 
@@ -1096,7 +1214,7 @@ AppUI.prototype._cvEnsureGraphBuilt = async function(page){
   return new Promise((resolve)=>{
     const w=window.cvWorker; const onMsg=(ev)=>{ const d=ev.data||{}; if(d.type==='buildGraph:result' && d.id===p.id){ w.removeEventListener('message', onMsg); p._graphReady=true; p._graphStamp=stamp; resolve(true) } };
     w.addEventListener('message', onMsg);
-    w.postMessage({ type:'buildGraph', id:p.id, image:{ data:img.data.buffer, width:c.width, height:c.height } }, [img.data.buffer]);
+    w.postMessage({ type:'buildGraph', id:p.id, image:{ data:new Uint8ClampedArray(img.data), width:c.width, height:c.height } });
   });
 }
 
@@ -1109,47 +1227,68 @@ AppUI.prototype._cvTracePath = async function(page, x, y){
   });
 }
 
-  AppUI.prototype._cvDeskew = function(){
+  AppUI.prototype._cvDeskew = function(reqId){
   const p=this.state.page; if(!p) return; const c=this._sourceCanvas(); if(!c) return;
   const ctx=c.getContext('2d'); const img=ctx.getImageData(0,0,c.width,c.height);
   if(!(window.cvWorker && window.cvWorkerReady)){ this._toast('Load OpenCV first', 'error'); return }
-  const w=window.cvWorker; const onMsg=(ev)=>{
-    const d=ev.data||{}; if(d.type==='deskew:result'){
-      w.removeEventListener('message', onMsg);
-      const out=d.image; const outCanvas=document.createElement('canvas'); outCanvas.width=out.width; outCanvas.height=out.height; outCanvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(out.data), out.width, out.height),0,0);
-      p.cvCanvas=outCanvas; this._applyEnhancements(p);
-    }
-  };
-  w.addEventListener('message', onMsg);
-  w.postMessage({ type:'deskew', image:{ data:img.data.buffer, width:c.width, height:c.height } }, [img.data.buffer]);
+  return new Promise((resolve)=>{
+    const w=window.cvWorker; const onMsg=(ev)=>{
+      const d=ev.data||{}; if(d.type==='deskew:result' && (!reqId || d.reqId===reqId)){
+        w.removeEventListener('message', onMsg);
+        const out=d.image; const outCanvas=document.createElement('canvas'); outCanvas.width=out.width; outCanvas.height=out.height; outCanvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(out.data), out.width, out.height),0,0);
+        p.cvCanvas=outCanvas; const ret=this._applyEnhancements(p); if(ret&&typeof ret.then==='function'){ ret.then(()=>resolve()); } else { resolve(); }
+      } else if(d.type==='error'){
+        try{ this._debug('cv:error', {op:'deskew', message:d.error}); }catch(_){ }
+        try{ this._toast('OpenCV error: '+(d.error||'deskew'), 'error') }catch(_){ }
+        try{ w.removeEventListener('message', onMsg) }catch(_){ }
+        resolve();
+      }
+    };
+    w.addEventListener('message', onMsg);
+    w.postMessage({ type:'deskew', reqId, image:{ data:new Uint8ClampedArray(img.data), width:c.width, height:c.height } });
+  });
 }
 
-  AppUI.prototype._cvDenoise = function(){
+  AppUI.prototype._cvDenoise = function(reqId){
   const p=this.state.page; if(!p) return; const c=this._sourceCanvas(); if(!c) return;
   const ctx=c.getContext('2d'); const img=ctx.getImageData(0,0,c.width,c.height);
   if(!(window.cvWorker && window.cvWorkerReady)){ this._toast('Load OpenCV first', 'error'); return }
-  const w=window.cvWorker; const onMsg=(ev)=>{
-    const d=ev.data||{}; if(d.type==='denoise:result'){
-      w.removeEventListener('message', onMsg);
-      const out=d.image; const outCanvas=document.createElement('canvas'); outCanvas.width=out.width; outCanvas.height=out.height; outCanvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(out.data), out.width, out.height),0,0);
-      p.cvCanvas=outCanvas; this._applyEnhancements(p);
-    }
-  };
-  w.addEventListener('message', onMsg);
-  w.postMessage({ type:'denoise', image:{ data:img.data.buffer, width:c.width, height:c.height } }, [img.data.buffer]);
+  return new Promise((resolve)=>{
+    const w=window.cvWorker; const onMsg=(ev)=>{
+      const d=ev.data||{}; if(d.type==='denoise:result' && (!reqId || d.reqId===reqId)){
+        w.removeEventListener('message', onMsg);
+        const out=d.image; const outCanvas=document.createElement('canvas'); outCanvas.width=out.width; outCanvas.height=out.height; outCanvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(out.data), out.width, out.height),0,0);
+        p.cvCanvas=outCanvas; const ret=this._applyEnhancements(p); if(ret&&typeof ret.then==='function'){ ret.then(()=>resolve()); } else { resolve(); }
+      } else if(d.type==='error'){
+        try{ this._debug('cv:error', {op:'denoise', message:d.error}); }catch(_){ }
+        try{ this._toast('OpenCV error: '+(d.error||'denoise'), 'error') }catch(_){ }
+        try{ w.removeEventListener('message', onMsg) }catch(_){ }
+        resolve();
+      }
+    };
+    w.addEventListener('message', onMsg);
+    w.postMessage({ type:'denoise', reqId, image:{ data:new Uint8ClampedArray(img.data), width:c.width, height:c.height } });
+  });
 }
 
-  AppUI.prototype._cvAdaptive = function(){
+  AppUI.prototype._cvAdaptive = function(reqId){
   const p=this.state.page; if(!p) return; const c=this._sourceCanvas(); if(!c) return;
   const ctx=c.getContext('2d'); const img=ctx.getImageData(0,0,c.width,c.height);
   if(!(window.cvWorker && window.cvWorkerReady)){ this._toast('Load OpenCV first', 'error'); return }
-  const w=window.cvWorker; const onMsg=(ev)=>{
-    const d=ev.data||{}; if(d.type==='adaptive:result'){
-      w.removeEventListener('message', onMsg);
-      const out=d.image; const outCanvas=document.createElement('canvas'); outCanvas.width=out.width; outCanvas.height=out.height; outCanvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(out.data), out.width, out.height),0,0);
-      p.cvCanvas=outCanvas; this._applyEnhancements(p);
-    }
-  };
-  w.addEventListener('message', onMsg);
-  w.postMessage({ type:'adaptive', image:{ data:img.data.buffer, width:c.width, height:c.height } }, [img.data.buffer]);
+  return new Promise((resolve)=>{
+    const w=window.cvWorker; const onMsg=(ev)=>{
+      const d=ev.data||{}; if(d.type==='adaptive:result' && (!reqId || d.reqId===reqId)){
+        w.removeEventListener('message', onMsg);
+        const out=d.image; const outCanvas=document.createElement('canvas'); outCanvas.width=out.width; outCanvas.height=out.height; outCanvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(out.data), out.width, out.height),0,0);
+        p.cvCanvas=outCanvas; const ret=this._applyEnhancements(p); if(ret&&typeof ret.then==='function'){ ret.then(()=>resolve()); } else { resolve(); }
+      } else if(d.type==='error'){
+        try{ this._debug('cv:error', {op:'adaptive', message:d.error}); }catch(_){ }
+        try{ this._toast('OpenCV error: '+(d.error||'adaptive'), 'error') }catch(_){ }
+        try{ w.removeEventListener('message', onMsg) }catch(_){ }
+        resolve();
+      }
+    };
+    w.addEventListener('message', onMsg);
+    w.postMessage({ type:'adaptive', reqId, image:{ data:new Uint8ClampedArray(img.data), width:c.width, height:c.height } });
+  });
 }
