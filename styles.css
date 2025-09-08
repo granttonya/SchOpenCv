@@ -1,13 +1,14 @@
 :root{
   --bg:#0f1115;--panel:#141824;--panel-2:#191f2e;--text:#e8ecf1;--muted:#9aa3b2;--accent:#4cc2ff;--accent-2:#6df2bf;--danger:#ff6b6b;--warning:#ffd166;--ok:#7dd56f;
-  --border:#21293a;--shadow:rgba(0,0,0,.35)
+  --border:#21293a;--shadow:rgba(0,0,0,.35);
+  --left-w:260px; --right-w:300px; --debug-h:200px;
 }
 *{box-sizing:border-box}
 html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--text);font:13px/1.4 ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial}
 
 /* Layout */
-.app{display:grid;grid-template-rows:auto 1fr auto;grid-template-columns:260px 1fr 300px;grid-template-areas:
+.app{display:grid;grid-template-rows:auto 1fr auto;grid-template-columns:var(--left-w) 1fr var(--right-w);grid-template-areas:
   'toolbar toolbar toolbar'
   'left    main    right'
   'status  status  status';height:100vh;overflow:hidden}
@@ -109,8 +110,22 @@ canvas{position:absolute;left:0;top:0}
 .toast.ok{border-color:var(--ok);color:#c7f5c1}
 
 /* Debug panel */
-.debug-panel{position:fixed;left:0;right:0;bottom:0;background:var(--panel-2);border-top:1px solid var(--border);box-shadow:0 -6px 18px var(--shadow);display:grid;grid-template-rows:auto 1fr;height:200px;z-index:1000}
+.debug-panel{position:fixed;left:0;right:0;bottom:0;background:var(--panel-2);border-top:1px solid var(--border);box-shadow:0 -6px 18px var(--shadow);display:grid;grid-template-rows:auto 1fr;height:var(--debug-h);z-index:1000}
 .debug-panel.hidden{display:none}
 .debug-head{display:flex;align-items:center;justify-content:space-between;padding:6px 10px;color:var(--muted)}
 .debug-actions{display:flex;gap:6px}
 #debug-memo{width:100%;height:100%;background:#0a0f19;color:var(--text);border:0;border-top:1px solid var(--border);padding:8px;font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:12px;line-height:1.3;resize:none}
+
+/* Tabs for right sidebar */
+.tabs{display:flex;gap:6px;padding:8px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,#141b2a,#101524);position:sticky;top:0;z-index:5}
+.tabs button{padding:6px 10px}
+.tabs button.active{outline:2px solid var(--accent)}
+.tab-panel{display:none}
+.tab-panel.active{display:block}
+
+/* Splitters */
+.splitter{position:fixed;z-index:1500;background:transparent}
+.splitter.v{top:48px;bottom:28px;width:6px;cursor:col-resize}
+.splitter.h{left:0;right:0;height:6px;cursor:row-resize}
+.splitter:hover{background:rgba(255,255,255,0.04)}
+.splitter:active{background:rgba(76,194,255,0.12)}

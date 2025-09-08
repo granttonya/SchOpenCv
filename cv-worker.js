@@ -152,6 +152,96 @@ function opDeskew(srcRGBA, report) {
   } finally { src.delete(); }
 }
 
+function opBgNormalize(srcRGBA, report){
+  const src = toMatRGBA(srcRGBA);
+  try{
+    if(report) report(15);
+    const gray = new cv.Mat(); cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+    // Estimate background via morphological opening with large kernel
+    const kSize = 61; const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(kSize, kSize));
+    const bg = new cv.Mat(); cv.morphologyEx(gray, bg, cv.MORPH_OPEN, kernel);
+    if(report) report(55);
+    // Normalize by division: gray / (bg + eps) -> stretch to 0..255
+    const fGray = new cv.Mat(); const fBg = new cv.Mat(); gray.convertTo(fGray, cv.CV_32F); bg.convertTo(fBg, cv.CV_32F);
+    const eps = 1.0; { const epsMat=new cv.Mat(fBg.rows,fBg.cols,fBg.type()); epsMat.setTo(new cv.Scalar(eps)); const sum=new cv.Mat(); cv.add(fBg, epsMat, sum); fBg.delete(); fBg=sum; epsMat.delete(); }
+    const norm = new cv.Mat(); cv.divide(fGray, fBg, norm, 1.0);
+    const norm2 = new cv.Mat(); cv.normalize(norm, norm2, 0, 255, cv.NORM_MINMAX);
+    const out8 = new cv.Mat(); norm2.convertTo(out8, cv.CV_8U);
+    const rgba = new cv.Mat(); cv.cvtColor(out8, rgba, cv.COLOR_GRAY2RGBA, 0);
+    if(report) report(100);
+    gray.delete(); bg.delete(); kernel.delete(); fGray.delete(); fBg.delete(); norm.delete(); norm2.delete(); out8.delete();
+    return matToImagePayload(rgba);
+  } finally { src.delete(); }
+}
+
+// Detect text regions: returns array of {x,y,w,h}
+function detectTextRegions(srcRGBA, options){
+  const src = toMatRGBA(srcRGBA);
+  try{
+    const gray = new cv.Mat(); cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+    const strength = Math.max(0, Math.min(3, (options && options.strength)|0 || 2));
+    // Reuse text mask pipeline
+    const tmask = buildTextMask(gray, { strength, upscale:false });
+    // Connected components on mask
+    const labels = new cv.Mat(); const stats = new cv.Mat(); const cents = new cv.Mat();
+    const num = cv.connectedComponentsWithStats(tmask, labels, stats, cents, 8, cv.CV_32S);
+    const w=src.cols, h=src.rows; const areaMin = Math.max(8, (options && options.minArea)|0 || 40); const areaMax = Math.max(areaMin, (options && options.maxArea)|0 || Math.floor((w*h)/40));
+    const rects = [];
+    for(let i=1;i<num;i++){
+      const area = stats.intPtr(i, cv.CC_STAT_AREA)[0];
+      if(area < areaMin || area > areaMax) continue;
+      const x = stats.intPtr(i, cv.CC_STAT_LEFT)[0];
+      const y = stats.intPtr(i, cv.CC_STAT_TOP)[0];
+      const ww = stats.intPtr(i, cv.CC_STAT_WIDTH)[0];
+      const hh = stats.intPtr(i, cv.CC_STAT_HEIGHT)[0];
+      rects.push({ x, y, w:ww, h:hh });
+    }
+    gray.delete(); tmask.delete(); labels.delete(); stats.delete(); cents.delete();
+    return rects;
+  } finally { src.delete(); }
+}
+
+function opDespeckle(srcRGBA, report, options){
+  const src = toMatRGBA(srcRGBA);
+  try{
+    const maxSize = Math.max(1, Math.min(5000, (options && options.maxSize)|0 || 40));
+    if(report) report(10);
+    const gray = new cv.Mat(); cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+    // Binarize via Otsu (foreground dark -> invert to white)
+    const binInv = new cv.Mat(); cv.threshold(gray, binInv, 0, 255, cv.THRESH_BINARY_INV | cv.THRESH_OTSU);
+    if(report) report(40);
+    // Connected components; remove tiny white components (dark specks in original)
+    const labels = new cv.Mat(); const stats = new cv.Mat(); const cents = new cv.Mat();
+    const num = cv.connectedComponentsWithStats(binInv, labels, stats, cents, 8, cv.CV_32S);
+    const maskKeep = cv.Mat.zeros(binInv.rows, binInv.cols, cv.CV_8UC1);
+    for(let i=1;i<num;i++){
+      const a = stats.intPtr(i, cv.CC_STAT_AREA)[0];
+      if(a > maxSize){
+        // Keep this component
+        const x = stats.intPtr(i, cv.CC_STAT_LEFT)[0];
+        const y = stats.intPtr(i, cv.CC_STAT_TOP)[0];
+        const w = stats.intPtr(i, cv.CC_STAT_WIDTH)[0];
+        const h = stats.intPtr(i, cv.CC_STAT_HEIGHT)[0];
+        const roiLabels = labels.roi(new cv.Rect(x,y,w,h));
+        const roiMask = maskKeep.roi(new cv.Rect(x,y,w,h));
+        // roiMask |= (roiLabels==i)
+        const low = new cv.Mat(roiLabels.rows, roiLabels.cols, roiLabels.type(), new cv.Scalar(i));
+        const high = new cv.Mat(roiLabels.rows, roiLabels.cols, roiLabels.type(), new cv.Scalar(i));
+        const cmp = new cv.Mat(); cv.inRange(roiLabels, low, high, cmp); cmp.copyTo(roiMask);
+        roiLabels.delete(); roiMask.delete(); cmp.delete(); low.delete(); high.delete();
+      }
+    }
+    if(report) report(75);
+    // Pixels to remove: components that were <maxSize
+    const removed = new cv.Mat(); cv.subtract(binInv, maskKeep, removed);
+    // Replace removed pixels in src with white
+    const white = new cv.Mat(src.rows, src.cols, src.type(), new cv.Scalar(255,255,255,255));
+    white.copyTo(src, removed);
+    if(report) report(100);
+    gray.delete(); binInv.delete(); labels.delete(); stats.delete(); cents.delete(); maskKeep.delete(); removed.delete(); white.delete();
+    return matToImagePayload(src);
+  } finally { src.delete(); }
+}
 function opDenoise(srcRGBA, report) {
   const src = toMatRGBA(srcRGBA);
   try {
@@ -239,6 +329,18 @@ self.onmessage = async (e) => {
         self.postMessage({ type: 'adaptive:result', reqId, image: out }, [out.data]);
         break;
       }
+      case 'bgNormalize': {
+        const { reqId } = msg;
+        const out = opBgNormalize(msg.image, (v)=> self.postMessage({ type:'progress', op:'bgnorm', reqId, value: v }));
+        self.postMessage({ type: 'bgnorm:result', reqId, image: out }, [out.data]);
+        break;
+      }
+      case 'despeckle': {
+        const { reqId, options } = msg;
+        const out = opDespeckle(msg.image, (v)=> self.postMessage({ type:'progress', op:'despeckle', reqId, value: v }), options||{});
+        self.postMessage({ type: 'despeckle:result', reqId, image: out }, [out.data]);
+        break;
+      }
       case 'textEnhance': {
         const { reqId, options } = msg;
         const out = opTextEnhance(msg.image, (v)=> self.postMessage({ type:'progress', op:'text', reqId, value: v }), options||{});
@@ -254,6 +356,12 @@ self.onmessage = async (e) => {
         }
         const svg = graphToSVG(g, options||{});
         self.postMessage({ type:'exportSVG:result', id, svg });
+        break;
+      }
+      case 'textRegions': {
+        const { image, options } = msg;
+        const rects = detectTextRegions(image, options||{});
+        self.postMessage({ type:'textRegions:result', rects });
         break;
       }
     }
@@ -497,7 +605,7 @@ function buildTextMask(gray, options){
   // Filter connected components to keep text-like sizes
   const labels = new cv.Mat(); const stats = new cv.Mat(); const cents = new cv.Mat();
   const num = cv.connectedComponentsWithStats(open, labels, stats, cents, 8, cv.CV_32S);
-  const out = new cv.Mat.zeros(mask.rows, mask.cols, cv.CV_8UC1);
+  const out = cv.Mat.zeros(mask.rows, mask.cols, cv.CV_8UC1);
   const areaScale = (options && options.upscale)?4:1;
   const minA = 8*areaScale, maxA = Math.max(2000*areaScale, ((gray.rows*gray.cols)|0)/(200/areaScale));
   for(let i=1;i<num;i++){
@@ -518,9 +626,23 @@ function opTextEnhance(srcRGBA, report, options){
   try{
     const strength = Math.max(0, Math.min(3, (options && options.strength)|0 || 2));
     const thicken = Math.max(0, Math.min(2, (options && options.thicken)|0 || 1));
+    const thin = Math.max(0, Math.min(2, (options && options.thin)|0 || 0));
+    const bgEq = !!(options && options.bgEq);
     const upscale = !!(options && options.upscale);
     if(report) report(10);
     let gray = new cv.Mat(); cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+    if(bgEq){
+      // Background normalization pre-pass
+      const kSize = 61; const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(kSize, kSize));
+      const bg = new cv.Mat(); cv.morphologyEx(gray, bg, cv.MORPH_OPEN, kernel);
+      const fGray = new cv.Mat(); const fBg = new cv.Mat(); gray.convertTo(fGray, cv.CV_32F); bg.convertTo(fBg, cv.CV_32F);
+      const eps = 1.0; { const epsMat=new cv.Mat(fBg.rows,fBg.cols,fBg.type()); epsMat.setTo(new cv.Scalar(eps)); const sum=new cv.Mat(); cv.add(fBg, epsMat, sum); fBg.delete(); fBg=sum; epsMat.delete(); }
+      const norm = new cv.Mat(); cv.divide(fGray, fBg, norm, 1.0);
+      const norm2 = new cv.Mat(); cv.normalize(norm, norm2, 0, 255, cv.NORM_MINMAX);
+      const out8 = new cv.Mat(); norm2.convertTo(out8, cv.CV_8U);
+      gray.delete(); gray = out8;
+      bg.delete(); kernel.delete(); fGray.delete(); fBg.delete(); norm.delete(); norm2.delete();
+    }
     // Optional upscale to help tiny text
     let scale = 1;
     if(upscale){ const hi = new cv.Mat(); cv.resize(gray, hi, new cv.Size(gray.cols*2, gray.rows*2), 0, 0, cv.INTER_CUBIC); gray.delete(); gray = hi; scale=2; }
@@ -535,19 +657,35 @@ function opTextEnhance(srcRGBA, report, options){
     // Stronger local binarization tuned for text
     const block = 9 + strength*4; const bsize = (block%2)?block:block+1; const C = 2 + strength*2;
     let bin = new cv.Mat(); cv.adaptiveThreshold(eq, bin, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, bsize, C);
+    // Optional thinning/opening to reduce bleed
+    if(thin>0){ const k = 1 + thin*2; const kx = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(k,k)); const tmp = new cv.Mat(); cv.morphologyEx(bin, tmp, cv.MORPH_OPEN, kx); bin.delete(); bin = tmp; kx.delete(); }
     // Optional thickening/closing to reconnect broken strokes
     if(thicken>0){ const k = 1 + thicken*2; const kx = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(k,k)); const tmp = new cv.Mat(); cv.morphologyEx(bin, tmp, cv.MORPH_CLOSE, kx); bin.delete(); bin = tmp; kx.delete(); }
     // Build text mask on (possibly upscaled) contrast image
     const tmask = buildTextMask(eq, { strength, upscale });
     if(report) report(70);
-    // Convert to RGBA and scale down if needed
-    let binRGBA = new cv.Mat(); cv.cvtColor(bin, binRGBA, cv.COLOR_GRAY2RGBA, 0);
+    // Build stroke mask (text pixels) and restrict by text-region mask; keep background untouched
+    // Ensure sizes match original src
+    let binUse = bin;
     let maskUse = tmask;
-    if(scale!==1){ const down = new cv.Mat(); const downM = new cv.Mat(); cv.resize(binRGBA, down, new cv.Size(src.cols, src.rows), 0,0, cv.INTER_AREA); cv.resize(tmask, downM, new cv.Size(src.cols, src.rows), 0,0, cv.INTER_NEAREST); binRGBA.delete(); tmask.delete(); binRGBA = down; maskUse = downM; }
-    // Composite: replace only text areas
-    binRGBA.copyTo(src, maskUse);
+    if(scale!==1){
+      const downBin = new cv.Mat(); cv.resize(bin, downBin, new cv.Size(src.cols, src.rows), 0,0, cv.INTER_NEAREST);
+      const downM = new cv.Mat(); cv.resize(tmask, downM, new cv.Size(src.cols, src.rows), 0,0, cv.INTER_NEAREST);
+      bin.delete(); binUse = downBin; tmask.delete(); maskUse = downM;
+    }
+    const strokeMask = new cv.Mat(); // 255 where text strokes are
+    cv.bitwise_not(binUse, strokeMask); // bin had background=255, text=0
+    const paintMask = new cv.Mat();
+    cv.bitwise_and(strokeMask, maskUse, paintMask);
+    // Paint strokes black on RGBA source, leave background as-is
+    src.setTo(new cv.Scalar(0,0,0,255), paintMask);
     if(report) report(100);
-    gray.delete(); eq.delete(); bin.delete(); binRGBA.delete(); maskUse.delete();
+    gray.delete(); eq.delete();
+    try{ if(binUse!==bin) binUse.delete(); }catch(_){ }
+    try{ bin.delete(); }catch(_){ }
+    try{ strokeMask.delete(); }catch(_){ }
+    try{ paintMask.delete(); }catch(_){ }
+    try{ maskUse.delete(); }catch(_){ }
     return matToImagePayload(src);
   } finally { src.delete(); }
 }
