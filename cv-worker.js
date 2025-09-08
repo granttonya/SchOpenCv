@@ -203,6 +203,14 @@ self.onmessage = async (e) => {
         self.postMessage({ type:'tracePath:result', id, path });
         break;
       }
+      case 'traceComponent': {
+        const { id, click } = msg;
+        const g = graphs.get(id);
+        if (!g) { self.postMessage({ type:'traceComponent:result', id, paths:null }); break; }
+        const paths = traceComponentFromClick(g, click.x, click.y);
+        self.postMessage({ type:'traceComponent:result', id, paths });
+        break;
+      }
       case 'detectLine': {
         const { roi, click } = msg; // roi: {data,width,height,rx,ry}
         const imgData = new ImageData(new Uint8ClampedArray(roi.data), roi.width, roi.height);
@@ -231,6 +239,12 @@ self.onmessage = async (e) => {
         self.postMessage({ type: 'adaptive:result', reqId, image: out }, [out.data]);
         break;
       }
+      case 'textEnhance': {
+        const { reqId, options } = msg;
+        const out = opTextEnhance(msg.image, (v)=> self.postMessage({ type:'progress', op:'text', reqId, value: v }), options||{});
+        self.postMessage({ type: 'text:result', reqId, image: out }, [out.data]);
+        break;
+      }
       case 'exportSVG': {
         const { id, options } = msg;
         let g = graphs.get(id);
@@ -254,15 +268,25 @@ function buildWireGraph(srcRGBA, options){
   const mat = toMatRGBA(srcRGBA);
   try{
     const gray = new cv.Mat(); cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY, 0);
-    const bin = new cv.Mat();
+    let bin = new cv.Mat();
     // Adaptive threshold is robust to uneven backgrounds
     cv.adaptiveThreshold(gray, bin, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 21, 15);
+    // Optionally exclude likely text regions (so graph ignores letters)
+    let workBin = bin;
+    try{
+      if(options && options.ignoreText){
+        const tmask = buildTextMask(gray, options);
+        const inv = new cv.Mat(); cv.bitwise_not(tmask, inv);
+        const masked = new cv.Mat(); cv.bitwise_and(bin, inv, masked);
+        workBin = masked; tmask.delete(); inv.delete();
+      }
+    }catch(_){ workBin = bin; }
     // Light denoise and favor axis-aligned wires
     const kH = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5,1));
     const kV = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1,5));
     const o1 = new cv.Mat(), o2 = new cv.Mat();
-    cv.morphologyEx(bin, o1, cv.MORPH_OPEN, kH);
-    cv.morphologyEx(bin, o2, cv.MORPH_OPEN, kV);
+    cv.morphologyEx(workBin, o1, cv.MORPH_OPEN, kH);
+    cv.morphologyEx(workBin, o2, cv.MORPH_OPEN, kV);
     const wires = new cv.Mat(); cv.bitwise_or(o1, o2, wires);
     // Bridge small gaps with a configurable close to improve continuity
     const bridge = Math.max(0, Math.min(8, (options && options.bridge)|0));
@@ -283,7 +307,7 @@ function buildWireGraph(srcRGBA, options){
     }
     zhangSuenThin(bytes, w, h);
     const {nodes, edges} = buildGraphFromSkeleton(bytes, w, h, gray);
-    gray.delete(); bin.delete(); o1.delete(); o2.delete(); wires.delete(); closed.delete();
+    gray.delete(); if(workBin!==bin){ workBin.delete(); } bin.delete(); o1.delete(); o2.delete(); wires.delete(); closed.delete();
     return { w, h, nodes, edges };
   } finally { mat.delete(); }
 }
@@ -427,4 +451,103 @@ function tracePathFromClick(graph, x, y){
   if(!best) return null;
   // Return path from a to b (full edge). Caller can downsample or map to world coords.
   return best.points;
+}
+
+function traceComponentFromClick(graph, x, y){
+  // Identify nearest edge as seed, then return all edge polylines connected via nodes.
+  if(!graph || !graph.edges || !graph.nodes) return null;
+  // Find nearest edge index
+  let bestIdx=-1; let bestD=1e12; const edges=graph.edges;
+  function distToSeg(px,py, x1,y1,x2,y2){ const vx=x2-x1, vy=y2-y1; const wx=px-x1, wy=py-y1; const c1=vx*wx+vy*wy; if(c1<=0) return Math.hypot(px-x1,py-y1); const c2=vx*vx+vy*vy; if(c2<=c1) return Math.hypot(px-x2,py-y2); const t=c1/c2; const rx=x1+t*vx, ry=y1+t*vy; return Math.hypot(px-rx,py-ry); }
+  for(let ei=0; ei<edges.length; ei++){
+    const e=edges[ei]; const pts=e.points||[]; for(let i=0;i<pts.length-1;i++){ const d=distToSeg(x,y, pts[i].x,pts[i].y, pts[i+1].x,pts[i+1].y); if(d<bestD){ bestD=d; bestIdx=ei } }
+  }
+  if(bestIdx<0) return null;
+  // Build adjacency: edges adjacent if they share a node id
+  const nodeToEdges = new Map();
+  for(let ei=0; ei<edges.length; ei++){
+    const e=edges[ei]; const a=e.a|0, b=e.b|0;
+    if(!nodeToEdges.has(a)) nodeToEdges.set(a, []); nodeToEdges.get(a).push(ei);
+    if(!nodeToEdges.has(b)) nodeToEdges.set(b, []); nodeToEdges.get(b).push(ei);
+  }
+  const visited = new Uint8Array(edges.length);
+  const stack=[bestIdx]; visited[bestIdx]=1; const comp=[];
+  while(stack.length){
+    const ei = stack.pop(); const e = edges[ei]; comp.push(ei);
+    const a=e.a|0, b=e.b|0; const as=nodeToEdges.get(a)||[], bs=nodeToEdges.get(b)||[];
+    for(const nei of as){ if(!visited[nei]){ visited[nei]=1; stack.push(nei); } }
+    for(const nei of bs){ if(!visited[nei]){ visited[nei]=1; stack.push(nei); } }
+  }
+  // Return as array of polylines (each edge's points). Caller may merge or simplify.
+  const paths = comp.map(ei=>{
+    const pts = edges[ei].points||[]; return pts;
+  });
+  return paths;
+}
+
+// --- Text mask and enhancement ---
+function buildTextMask(gray, options){
+  // Detect likely text as dark, relatively small blobs on light background.
+  const strength = Math.max(0, Math.min(3, (options && options.strength)|0 || 2));
+  const kSize = Math.max(7, Math.min(25, 11 + strength*4));
+  const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(kSize, kSize));
+  const bh = new cv.Mat(); cv.morphologyEx(gray, bh, cv.MORPH_BLACKHAT, kernel);
+  const mask = new cv.Mat(); cv.threshold(bh, mask, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
+  const open = new cv.Mat(); const k3 = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3,3)); cv.morphologyEx(mask, open, cv.MORPH_OPEN, k3);
+  // Filter connected components to keep text-like sizes
+  const labels = new cv.Mat(); const stats = new cv.Mat(); const cents = new cv.Mat();
+  const num = cv.connectedComponentsWithStats(open, labels, stats, cents, 8, cv.CV_32S);
+  const out = new cv.Mat.zeros(mask.rows, mask.cols, cv.CV_8UC1);
+  const areaScale = (options && options.upscale)?4:1;
+  const minA = 8*areaScale, maxA = Math.max(2000*areaScale, ((gray.rows*gray.cols)|0)/(200/areaScale));
+  for(let i=1;i<num;i++){
+    const a = stats.intPtr(i, cv.CC_STAT_AREA)[0];
+    const w = stats.intPtr(i, cv.CC_STAT_WIDTH)[0];
+    const h = stats.intPtr(i, cv.CC_STAT_HEIGHT)[0];
+    if(a>=minA && a<=maxA && w>=2 && h>=2){
+      const rect = new cv.Rect(stats.intPtr(i, cv.CC_STAT_LEFT)[0], stats.intPtr(i, cv.CC_STAT_TOP)[0], w, h);
+      const roi = out.roi(rect); roi.setTo(new cv.Scalar(255)); roi.delete();
+    }
+  }
+  kernel.delete(); bh.delete(); mask.delete(); open.delete(); labels.delete(); stats.delete(); cents.delete();
+  return out;
+}
+
+function opTextEnhance(srcRGBA, report, options){
+  const src = toMatRGBA(srcRGBA);
+  try{
+    const strength = Math.max(0, Math.min(3, (options && options.strength)|0 || 2));
+    const thicken = Math.max(0, Math.min(2, (options && options.thicken)|0 || 1));
+    const upscale = !!(options && options.upscale);
+    if(report) report(10);
+    let gray = new cv.Mat(); cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+    // Optional upscale to help tiny text
+    let scale = 1;
+    if(upscale){ const hi = new cv.Mat(); cv.resize(gray, hi, new cv.Size(gray.cols*2, gray.rows*2), 0, 0, cv.INTER_CUBIC); gray.delete(); gray = hi; scale=2; }
+    if(report) report(25);
+    // CLAHE for local contrast
+    let eq = null; try{
+      const tiles = 8 + strength*4; const clip = 2.0 + strength*1.0;
+      const clahe = (cv.createCLAHE? cv.createCLAHE(clip, new cv.Size(tiles,tiles)) : new cv.CLAHE(clip, new cv.Size(tiles,tiles)));
+      eq = new cv.Mat(); clahe.apply(gray, eq); try{ clahe.delete && clahe.delete(); }catch(_){ }
+    }catch(_){ eq = gray.clone(); }
+    if(report) report(45);
+    // Stronger local binarization tuned for text
+    const block = 9 + strength*4; const bsize = (block%2)?block:block+1; const C = 2 + strength*2;
+    let bin = new cv.Mat(); cv.adaptiveThreshold(eq, bin, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, bsize, C);
+    // Optional thickening/closing to reconnect broken strokes
+    if(thicken>0){ const k = 1 + thicken*2; const kx = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(k,k)); const tmp = new cv.Mat(); cv.morphologyEx(bin, tmp, cv.MORPH_CLOSE, kx); bin.delete(); bin = tmp; kx.delete(); }
+    // Build text mask on (possibly upscaled) contrast image
+    const tmask = buildTextMask(eq, { strength, upscale });
+    if(report) report(70);
+    // Convert to RGBA and scale down if needed
+    let binRGBA = new cv.Mat(); cv.cvtColor(bin, binRGBA, cv.COLOR_GRAY2RGBA, 0);
+    let maskUse = tmask;
+    if(scale!==1){ const down = new cv.Mat(); const downM = new cv.Mat(); cv.resize(binRGBA, down, new cv.Size(src.cols, src.rows), 0,0, cv.INTER_AREA); cv.resize(tmask, downM, new cv.Size(src.cols, src.rows), 0,0, cv.INTER_NEAREST); binRGBA.delete(); tmask.delete(); binRGBA = down; maskUse = downM; }
+    // Composite: replace only text areas
+    binRGBA.copyTo(src, maskUse);
+    if(report) report(100);
+    gray.delete(); eq.delete(); bin.delete(); binRGBA.delete(); maskUse.delete();
+    return matToImagePayload(src);
+  } finally { src.delete(); }
 }

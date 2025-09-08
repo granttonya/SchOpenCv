@@ -290,7 +290,7 @@ async function applyEnhancements(bitmap, params){
   const scale = Math.min(1, Math.sqrt(maxPixels/(w*h)));
   const tw = Math.max(1, Math.round(w*scale)), th = Math.max(1, Math.round(h*scale));
 
-  const off = document.createElement('canvas'); off.width = tw; off.height = th; const ctx = off.getContext('2d');
+  const off = document.createElement('canvas'); off.width = tw; off.height = th; const ctx = off.getContext('2d', { willReadFrequently: true });
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(bitmap, 0,0,w,h, 0,0,tw,th);
   let img = ctx.getImageData(0,0,tw,th); let d = img.data;
@@ -315,7 +315,7 @@ async function applyEnhancements(bitmap, params){
   if(sharpen>0){ convolveSharpen(ctx, tw, th, sharpen) }
   // If scaled, upscale to original size without smoothing so pixels remain crisp
   if(scale!==1){
-    const full = document.createElement('canvas'); full.width=w; full.height=h; const fctx=full.getContext('2d'); fctx.imageSmoothingEnabled=false;
+    const full = document.createElement('canvas'); full.width=w; full.height=h; const fctx=full.getContext('2d', { willReadFrequently: true }); fctx.imageSmoothingEnabled=false;
     fctx.drawImage(off,0,0,tw,th,0,0,w,h); return full;
   }
   return off;
@@ -536,8 +536,12 @@ class AppUI {
     this.layerDelete.addEventListener('click', ()=>this._deleteActiveLayer());
     this.layerActive.addEventListener('change', ()=>{ const id=this.layerActive.value; this._setActiveLayer(id) });
 
-    // OpenCV controls
+    // OpenCV controls + export
     this.cvLoad=$$('#cv-load'); this.cvDeskew=$$('#cv-deskew'); this.cvDenoise=$$('#cv-denoise'); this.cvAdapt=$$('#cv-adapt'); this.cvReset=$$('#cv-reset');
+    this.cvText=$$('#cv-text');
+    this.cvTextStrength=$$('#cv-text-strength');
+    this.cvTextThicken=$$('#cv-text-thicken');
+    this.cvTextUpscale=$$('#cv-text-upscale');
     this.cvAutoClean=$$('#cv-autoclean');
     this.cvAuto=$$('#cv-auto');
     this.cvExport=$$('#cv-export-svg');
@@ -547,6 +551,9 @@ class AppUI {
     this.cvStroke=$$('#cv-stroke');
     this.cvColor=$$('#cv-color');
     this.cvBridge=$$('#cv-bridge');
+    this.cvIgnoreText=$$('#cv-ignore-text');
+    this.exportPng=$$('#btn-export-png');
+    this.exportMerge=$$('#export-merge');
     const need=async()=>{ if(window.cvWorker && window.cvWorkerReady) return true; try{ await loadOpenCV(this.cvLoad) ; return true }catch(e){ alert('Failed to load OpenCV'); return false } };
     this.cvLoad.addEventListener('click', async()=>{ this._debug('btn:cv-load:click',{}); await this._withBusy(this.cvLoad, async()=>{ await need(); this._debug('btn:cv-load:done',{ready:!!(window.cvWorker&&window.cvWorkerReady)}); }) });
     this.cvDeskew.addEventListener('click', async()=>{ this._debug('btn:cv-deskew:click',{}); await this._withCvProgress(this.cvDeskew, 'deskew', async(reqId)=>{ if(await need()){ await this._cvDeskew(reqId); this._debug('btn:cv-deskew:done',{reqId}); } }) });
@@ -618,6 +625,21 @@ class AppUI {
       });
     }
 
+    if(this.cvText){
+      this.cvText.addEventListener('click', async()=>{
+        this._debug('btn:cv-text:click',{});
+        await this._withCvProgress(this.cvText, 'text', async(reqId)=>{ if(await need()){ await this._cvTextEnhance(reqId); this._debug('btn:cv-text:done',{reqId}); } });
+      });
+    }
+
+    if(this.exportPng){
+      this.exportPng.addEventListener('click', async()=>{
+        try{
+          await this._exportPNG();
+        }catch(e){ this._toast('PNG export failed','error'); this._debug('export:png:error', String(e&&e.message||e)); }
+      });
+    }
+
     // Vector preview overlay controls
     const regenOverlay = async()=>{ if(!this.cvPreview?.checked) { this._setVectorOverlay(null); return; } await this._buildAndShowVectorOverlay(); };
     this.cvPreview && this.cvPreview.addEventListener('change', regenOverlay);
@@ -626,6 +648,7 @@ class AppUI {
     this.cvStroke && this.cvStroke.addEventListener('input', ()=>{ if(this.cvPreview?.checked) { this._buildAndShowVectorOverlay(); } });
     this.cvColor && this.cvColor.addEventListener('input', ()=>{ if(this.cvPreview?.checked) { this._buildAndShowVectorOverlay(); } });
     this.cvBridge && this.cvBridge.addEventListener('input', ()=>{ if(this.cvPreview?.checked) { this._buildAndShowVectorOverlay(); } });
+    this.cvIgnoreText && this.cvIgnoreText.addEventListener('change', async()=>{ try{ if(this.cvPreview?.checked){ await this._cvEnsureGraphBuilt(this.state.page); await this._buildAndShowVectorOverlay(); } }catch(_){ } });
   }
   _renderLayers(){
     const p=this.state.page; const list=this.layersList; const activeSel=this.layerActive; list.innerHTML=''; activeSel.innerHTML='';
@@ -712,6 +735,80 @@ class AppUI {
   }
   _setupHelp(){
     this.help=$$('.help'); $$('#btn-help').addEventListener('click',()=>this.help.classList.toggle('show'));
+  }
+
+  async _exportPNG(){
+    const p=this.state.page; if(!p){ this._toast('No page to export','error'); return }
+    // Base image: processed (with enhancements) or cv canvas or original bitmap
+    let base = p.processedCanvas || p.cvCanvas || null;
+    if(!base){
+      const c=document.createElement('canvas'); c.width=p.bitmap.width; c.height=p.bitmap.height; c.getContext('2d').drawImage(p.bitmap,0,0); base=c;
+    }
+    const out=document.createElement('canvas'); out.width=base.width; out.height=base.height; const ctx=out.getContext('2d');
+    ctx.imageSmoothingEnabled=false; ctx.drawImage(base,0,0);
+    const includeOverlay = this.exportMerge ? !!this.exportMerge.checked : false;
+    if(includeOverlay){
+      // Optionally include vector overlay if preview is enabled; ensure it's ready
+      try{
+        if(this.cvPreview?.checked){ await this._buildAndShowVectorOverlay(); }
+      }catch(_){ }
+      // Draw vector overlay if available
+      try{
+        const url = (this.state.page && this.state.page.vectorOverlayUrl) || null;
+        if(url){ await new Promise((resolve,reject)=>{ const img=new Image(); img.onload=()=>{ try{ ctx.drawImage(img,0,0); }catch(_){} resolve(); }; img.onerror=()=>resolve(); img.src=url; }); }
+      }catch(_){ }
+      // Draw annotations (rect/arrow/text/measure/highlight)
+      this._drawAnnotationsToCanvas(ctx, p);
+    }
+    const dataUrl = out.toDataURL('image/png');
+    const name = (p.name||'page').replace(/\.[a-z0-9]+$/i,'');
+    download(`${name}-export.png`, dataUrl);
+    this._debug('export:png:done', { w:out.width, h:out.height, overlay:includeOverlay });
+  }
+
+  _drawAnnotationsToCanvas(ctx, page){
+    if(!page) return;
+    ctx.save();
+    for(const a of page.annotations||[]){
+      const layer = page.layers.find(l=>l.id===a.layerId); if(layer && !layer.visible) continue;
+      switch(a.type){
+        case 'rect': {
+          ctx.save(); ctx.strokeStyle=a.props?.color||'#6df2bf'; ctx.setLineDash(a.props?.dash?[4,4]:[]);
+          const p1=a.points[0], p2=a.points[1]; const x=Math.min(p1.x,p2.x), y=Math.min(p1.y,p2.y), w=Math.abs(p1.x-p2.x), h=Math.abs(p1.y-p2.y);
+          ctx.strokeRect(x,y,w,h); ctx.restore();
+          break;
+        }
+        case 'arrow': {
+          ctx.save(); const color=a.props?.color||'#4cc2ff'; ctx.strokeStyle=color; ctx.fillStyle=color; ctx.lineWidth=1.5;
+          const p1=a.points[0], p2=a.points[1]; ctx.beginPath(); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.stroke();
+          const ang=Math.atan2(p2.y-p1.y,p2.x-p1.x); const size=8; ctx.beginPath(); ctx.moveTo(p2.x,p2.y);
+          ctx.lineTo(p2.x-size*Math.cos(ang-0.4), p2.y-size*Math.sin(ang-0.4)); ctx.lineTo(p2.x-size*Math.cos(ang+0.4), p2.y-size*Math.sin(ang+0.4)); ctx.closePath(); ctx.fill();
+          ctx.restore();
+          break;
+        }
+        case 'text': {
+          ctx.save(); ctx.fillStyle=a.props?.color||'#ffd166'; ctx.strokeStyle='#0009'; ctx.lineWidth=3; ctx.font='13px ui-sans-serif';
+          const p0=a.points[0]; const text=a.text||''; ctx.strokeText(text, p0.x+1, p0.y+1); ctx.fillText(text, p0.x, p0.y); ctx.restore();
+          break;
+        }
+        case 'measure': {
+          ctx.save(); ctx.strokeStyle='#e8ecf1'; ctx.fillStyle='#e8ecf1'; ctx.setLineDash([6,4]);
+          const p1=a.points[0], p2=a.points[1]; ctx.beginPath(); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.stroke(); ctx.setLineDash([]);
+          const text=a.props?.label||''; if(text){ const midx=(p1.x+p2.x)/2, midy=(p1.y+p2.y)/2; ctx.font='12px ui-sans-serif'; ctx.fillStyle='#0b0e17'; ctx.strokeStyle='#e8ecf1'; const pad=4; const w=ctx.measureText(text).width+pad*2; const h=18; if(ctx.roundRect){ ctx.beginPath(); ctx.roundRect(midx-w/2, midy-20, w, h, 6); ctx.fill(); ctx.stroke(); } else { ctx.fillRect(midx-w/2, midy-20, w, h); ctx.strokeRect(midx-w/2, midy-20, w, h); } ctx.fillStyle='#e8ecf1'; ctx.fillText(text, midx-w/2+pad, midy-6); }
+          ctx.restore();
+          break;
+        }
+        case 'highlight': {
+          ctx.save(); const color=a.props?.color||'#ffd166';
+          const alphaCtl = (this.hlAlpha && +this.hlAlpha.value) || 0; const alpha = Math.max(0, Math.min(1, 1 - (alphaCtl/100)));
+          ctx.globalAlpha = alpha; ctx.strokeStyle=color; ctx.lineWidth=a.props?.width||4; ctx.lineCap='round'; ctx.shadowColor=color; ctx.shadowBlur=8;
+          const pts=a.points||[]; if(pts.length>=2){ ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); for(let i=1;i<pts.length;i++){ ctx.lineTo(pts[i].x, pts[i].y) } ctx.stroke(); }
+          ctx.restore();
+          break;
+        }
+      }
+    }
+    ctx.restore();
   }
   _setVectorOverlay(url){
     const p=this.state.page; if(!p) return;
@@ -886,6 +983,17 @@ class AppUI {
         }
         const built = await this._cvEnsureGraphBuilt(p);
         if(built){
+          const stopAt = this.hlStop ? !!this.hlStop.checked : true;
+          if(!stopAt){
+            const paths = await this._cvTraceComponent(p, world.x|0, world.y|0);
+            if(paths && paths.length){
+              const w = +(this.hlWidth?.value||6);
+              let count=0;
+              for(const pts of paths){ if(pts && pts.length>=2){ this._addAnnotation({type:'highlight', points:pts.map(pt=>({x:pt.x,y:pt.y})), props:{color:'#ffd166', width:w}}); count++; } }
+              this._debug('highlight:graph-component', {paths: paths.length, drawn: count});
+              return;
+            }
+          }
           const path = await this._cvTracePath(p, world.x|0, world.y|0);
           if(path && path.length>=2){
             const w = +(this.hlWidth?.value||6);
@@ -1298,21 +1406,22 @@ function loadOpenCV(button){
 }
 
 // OpenCV operations
-AppUI.prototype._sourceCanvas = function(){ const p=this.state.page; if(!p) return null; if(p.cvCanvas) return p.cvCanvas; const c=document.createElement('canvas'); c.width=p.bitmap.width; c.height=p.bitmap.height; c.getContext('2d').drawImage(p.bitmap,0,0); return c };
+  AppUI.prototype._sourceCanvas = function(){ const p=this.state.page; if(!p) return null; if(p.cvCanvas) return p.cvCanvas; const c=document.createElement('canvas'); c.width=p.bitmap.width; c.height=p.bitmap.height; c.getContext('2d', { willReadFrequently: true }).drawImage(p.bitmap,0,0); return c };
 
 // Graph build/trace helpers (run in worker)
-AppUI.prototype._cvEnsureGraphBuilt = async function(page){
+  AppUI.prototype._cvEnsureGraphBuilt = async function(page){
   const p = page||this.state.page; if(!p) return false;
   if(!(window.cvWorker && window.cvWorkerReady)) return false;
   const src = p.processedCanvas || p.cvCanvas || this._sourceCanvas();
   const c = src; if(!c) return false; const ctx=c.getContext('2d'); const img=ctx.getImageData(0,0,c.width,c.height);
   const bridge = parseInt(this.cvBridge?.value||'1')|0;
-  const stamp = `${c.width}x${c.height}:${(p.processedCanvas?1:0)}:${(p.cvCanvas?1:0)}:${p.enhance.brightness},${p.enhance.contrast},${p.enhance.threshold},${p.enhance.sharpen},${p.enhance.invert?1:0},${p.enhance.grayscale?1:0}:bridge=${bridge}`;
+  const ignoreText = this.cvIgnoreText && this.cvIgnoreText.checked ? 1 : 0;
+  const stamp = `${c.width}x${c.height}:${(p.processedCanvas?1:0)}:${(p.cvCanvas?1:0)}:${p.enhance.brightness},${p.enhance.contrast},${p.enhance.threshold},${p.enhance.sharpen},${p.enhance.invert?1:0},${p.enhance.grayscale?1:0}:bridge=${bridge}:ignoreText=${ignoreText}`;
   if(p._graphStamp === stamp && p._graphReady){ return true }
   return new Promise((resolve)=>{
     const w=window.cvWorker; const onMsg=(ev)=>{ const d=ev.data||{}; if(d.type==='buildGraph:result' && d.id===p.id){ w.removeEventListener('message', onMsg); p._graphReady=true; p._graphStamp=stamp; resolve(true) } };
     w.addEventListener('message', onMsg);
-    w.postMessage({ type:'buildGraph', id:p.id, options:{ bridge }, image:{ data:new Uint8ClampedArray(img.data), width:c.width, height:c.height } });
+    w.postMessage({ type:'buildGraph', id:p.id, options:{ bridge, ignoreText }, image:{ data:new Uint8ClampedArray(img.data), width:c.width, height:c.height } });
   });
 }
 
@@ -1325,9 +1434,18 @@ AppUI.prototype._cvTracePath = async function(page, x, y){
   });
 }
 
+AppUI.prototype._cvTraceComponent = async function(page, x, y){
+  const p=page||this.state.page; if(!p) return null; if(!(window.cvWorker && window.cvWorkerReady)) return null;
+  return new Promise((resolve)=>{
+    const w=window.cvWorker; const onMsg=(ev)=>{ const d=ev.data||{}; if(d.type==='traceComponent:result' && d.id===p.id){ w.removeEventListener('message', onMsg); resolve(d.paths||null) } };
+    w.addEventListener('message', onMsg);
+    w.postMessage({ type:'traceComponent', id:p.id, click:{x,y} });
+  });
+}
+
   AppUI.prototype._cvDeskew = function(reqId){
   const p=this.state.page; if(!p) return; const c=this._sourceCanvas(); if(!c) return;
-  const ctx=c.getContext('2d'); const img=ctx.getImageData(0,0,c.width,c.height);
+  const ctx=c.getContext('2d', { willReadFrequently: true }); const img=ctx.getImageData(0,0,c.width,c.height);
   if(!(window.cvWorker && window.cvWorkerReady)){ this._toast('Load OpenCV first', 'error'); return }
   return new Promise((resolve)=>{
     const w=window.cvWorker; const onMsg=(ev)=>{
@@ -1349,7 +1467,7 @@ AppUI.prototype._cvTracePath = async function(page, x, y){
 
   AppUI.prototype._cvDenoise = function(reqId){
   const p=this.state.page; if(!p) return; const c=this._sourceCanvas(); if(!c) return;
-  const ctx=c.getContext('2d'); const img=ctx.getImageData(0,0,c.width,c.height);
+  const ctx=c.getContext('2d', { willReadFrequently: true }); const img=ctx.getImageData(0,0,c.width,c.height);
   if(!(window.cvWorker && window.cvWorkerReady)){ this._toast('Load OpenCV first', 'error'); return }
   return new Promise((resolve)=>{
     const w=window.cvWorker; const onMsg=(ev)=>{
@@ -1371,7 +1489,7 @@ AppUI.prototype._cvTracePath = async function(page, x, y){
 
   AppUI.prototype._cvAdaptive = function(reqId){
   const p=this.state.page; if(!p) return; const c=this._sourceCanvas(); if(!c) return;
-  const ctx=c.getContext('2d'); const img=ctx.getImageData(0,0,c.width,c.height);
+  const ctx=c.getContext('2d', { willReadFrequently: true }); const img=ctx.getImageData(0,0,c.width,c.height);
   if(!(window.cvWorker && window.cvWorkerReady)){ this._toast('Load OpenCV first', 'error'); return }
   return new Promise((resolve)=>{
     const w=window.cvWorker; const onMsg=(ev)=>{
@@ -1388,5 +1506,30 @@ AppUI.prototype._cvTracePath = async function(page, x, y){
     };
     w.addEventListener('message', onMsg);
     w.postMessage({ type:'adaptive', reqId, image:{ data:new Uint8ClampedArray(img.data), width:c.width, height:c.height } });
+  });
+}
+
+  AppUI.prototype._cvTextEnhance = function(reqId){
+  const p=this.state.page; if(!p) return; const c=this._sourceCanvas(); if(!c) return;
+  const ctx=c.getContext('2d'); const img=ctx.getImageData(0,0,c.width,c.height);
+  if(!(window.cvWorker && window.cvWorkerReady)){ this._toast('Load OpenCV first', 'error'); return }
+  return new Promise((resolve)=>{
+    const w=window.cvWorker; const onMsg=(ev)=>{
+      const d=ev.data||{}; if(d.type==='text:result' && (!reqId || d.reqId===reqId)){
+        w.removeEventListener('message', onMsg);
+        const out=d.image; const outCanvas=document.createElement('canvas'); outCanvas.width=out.width; outCanvas.height=out.height; outCanvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(out.data), out.width, out.height),0,0);
+        p.cvCanvas=outCanvas; const ret=this._applyEnhancements(p); if(ret&&typeof ret.then==='function'){ ret.then(()=>resolve()); } else { resolve(); }
+      } else if(d.type==='error'){
+        try{ this._debug('cv:error', {op:'text', message:d.error}); }catch(_){ }
+        try{ this._toast('OpenCV error: '+(d.error||'text'), 'error') }catch(_){ }
+        try{ w.removeEventListener('message', onMsg) }catch(_){ }
+        resolve();
+      }
+    };
+    w.addEventListener('message', onMsg);
+    const strength = parseInt(this.cvTextStrength?.value||'2')|0;
+    const thicken = parseInt(this.cvTextThicken?.value||'1')|0;
+    const upscale = this.cvTextUpscale ? !!this.cvTextUpscale.checked : true;
+    w.postMessage({ type:'textEnhance', reqId, options:{ strength, thicken, upscale }, image:{ data:new Uint8ClampedArray(img.data), width:c.width, height:c.height } });
   });
 }
