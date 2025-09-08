@@ -13,22 +13,35 @@ const graphs = new Map();
 function loadCV() {
   return new Promise((resolve, reject) => {
     if (ready) return resolve();
-    // Make sure wasm path resolves when loading from CDN
-    self.Module = {
-      locateFile: (file) => `https://docs.opencv.org/4.x/${file}`
-    };
-    try {
-      importScripts('https://docs.opencv.org/4.x/opencv.js');
-    } catch (e) {
-      reject(e);
-      return;
-    }
-    if (self.cv && typeof self.cv['onRuntimeInitialized'] !== 'undefined') {
-      self.cv['onRuntimeInitialized'] = () => { ready = true; resolve(); };
-    } else {
-      // Some builds initialize immediately
-      ready = true; resolve();
-    }
+    const sources = [
+      // Prefer CORS-friendly CDN first
+      'https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.9.0/dist/opencv.js',
+      'https://unpkg.com/@techstark/opencv-js@4.9.0/dist/opencv.js',
+      // Try local vendored copy if provided
+      (()=>{ try{ const u=new URL('./vendor/opencv/opencv.js', self.location.href); return u.href }catch(_){ return self.location.origin + '/vendor/opencv/opencv.js' } })(),
+      // As a last resort, docs site (often blocked by CORS)
+      'https://docs.opencv.org/4.x/opencv.js'
+    ];
+    (async()=>{
+      let lastErr = null;
+      for(const url of sources){
+        try{
+          // Point wasm loader to same base directory as the JS file
+          const base = url.slice(0, url.lastIndexOf('/')+1);
+          self.Module = { locateFile: (file) => base + file };
+          importScripts(url);
+          if (self.cv && typeof self.cv['onRuntimeInitialized'] !== 'undefined') {
+            self.cv['onRuntimeInitialized'] = () => { ready = true; resolve(); };
+            return;
+          }
+          if (self.cv && typeof self.cv.Mat === 'function') { ready = true; resolve(); return; }
+          // Wait briefly for WASM to finish booting if signals are atypical
+          await new Promise((res)=>setTimeout(res, 250));
+          if (self.cv && typeof self.cv.Mat === 'function') { ready = true; resolve(); return; }
+        }catch(e){ lastErr = e; continue }
+      }
+      reject(lastErr || new Error('Failed to load OpenCV.js from all sources'));
+    })();
   });
 }
 
@@ -83,9 +96,19 @@ function matToImagePayload(mat) {
     rgba = mat.clone();
   } else {
     rgba = new cv.Mat();
-    cv.cvtColor(mat, rgba, cv.COLOR_RGBA2RGBA, 0);
+    try{
+      const ch = mat.channels ? mat.channels() : (mat.type() === cv.CV_8UC1 ? 1 : 4);
+      if(ch === 1){ cv.cvtColor(mat, rgba, cv.COLOR_GRAY2RGBA, 0); }
+      else if(ch === 3){ cv.cvtColor(mat, rgba, cv.COLOR_RGB2RGBA, 0); }
+      else { cv.cvtColor(mat, rgba, cv.COLOR_RGBA2RGBA, 0); }
+    }catch(_){
+      // Fallback: draw via canvas path
+      const w = mat.cols, h = mat.rows; const tmp = new cv.Mat(); cv.cvtColor(mat, tmp, cv.COLOR_RGBA2RGB, 0); const buf3 = new Uint8ClampedArray(tmp.data); const rgbaArr = new Uint8ClampedArray(w*h*4); for(let i=0,j=0;i<buf3.length;i+=3,j+=4){ rgbaArr[j]=buf3[i]; rgbaArr[j+1]=buf3[i+1]; rgbaArr[j+2]=buf3[i+2]; rgbaArr[j+3]=255; } tmp.delete(); const payload = { data: rgbaArr.buffer, width:w, height:h }; return payload;
+    }
   }
   const buf = new Uint8ClampedArray(rgba.data);
+  // Ensure opaque alpha to avoid compositing artifacts (black tiles)
+  for(let i=3;i<buf.length;i+=4){ buf[i]=255; }
   const payload = { data: buf.buffer, width: w, height: h };
   rgba.delete();
   return payload;
@@ -162,7 +185,7 @@ function opBgNormalize(srcRGBA, report){
     const bg = new cv.Mat(); cv.morphologyEx(gray, bg, cv.MORPH_OPEN, kernel);
     if(report) report(55);
     // Normalize by division: gray / (bg + eps) -> stretch to 0..255
-    const fGray = new cv.Mat(); const fBg = new cv.Mat(); gray.convertTo(fGray, cv.CV_32F); bg.convertTo(fBg, cv.CV_32F);
+    const fGray = new cv.Mat(); let fBg = new cv.Mat(); gray.convertTo(fGray, cv.CV_32F); bg.convertTo(fBg, cv.CV_32F);
     const eps = 1.0; { const epsMat=new cv.Mat(fBg.rows,fBg.cols,fBg.type()); epsMat.setTo(new cv.Scalar(eps)); const sum=new cv.Mat(); cv.add(fBg, epsMat, sum); fBg.delete(); fBg=sum; epsMat.delete(); }
     const norm = new cv.Mat(); cv.divide(fGray, fBg, norm, 1.0);
     const norm2 = new cv.Mat(); cv.normalize(norm, norm2, 0, 255, cv.NORM_MINMAX);
@@ -345,6 +368,12 @@ self.onmessage = async (e) => {
         const { reqId, options } = msg;
         const out = opTextEnhance(msg.image, (v)=> self.postMessage({ type:'progress', op:'text', reqId, value: v }), options||{});
         self.postMessage({ type: 'text:result', reqId, image: out }, [out.data]);
+        break;
+      }
+      case 'textEnhance2': {
+        const { reqId, options } = msg;
+        const out = opTextEnhanceSauvola(msg.image, (v)=> self.postMessage({ type:'progress', op:'text2', reqId, value: v }), options||{});
+        self.postMessage({ type: 'text2:result', reqId, image: out }, [out.data]);
         break;
       }
       case 'exportSVG': {
@@ -635,7 +664,7 @@ function opTextEnhance(srcRGBA, report, options){
       // Background normalization pre-pass
       const kSize = 61; const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(kSize, kSize));
       const bg = new cv.Mat(); cv.morphologyEx(gray, bg, cv.MORPH_OPEN, kernel);
-      const fGray = new cv.Mat(); const fBg = new cv.Mat(); gray.convertTo(fGray, cv.CV_32F); bg.convertTo(fBg, cv.CV_32F);
+    const fGray = new cv.Mat(); let fBg = new cv.Mat(); gray.convertTo(fGray, cv.CV_32F); bg.convertTo(fBg, cv.CV_32F);
       const eps = 1.0; { const epsMat=new cv.Mat(fBg.rows,fBg.cols,fBg.type()); epsMat.setTo(new cv.Scalar(eps)); const sum=new cv.Mat(); cv.add(fBg, epsMat, sum); fBg.delete(); fBg=sum; epsMat.delete(); }
       const norm = new cv.Mat(); cv.divide(fGray, fBg, norm, 1.0);
       const norm2 = new cv.Mat(); cv.normalize(norm, norm2, 0, 255, cv.NORM_MINMAX);
@@ -687,5 +716,66 @@ function opTextEnhance(srcRGBA, report, options){
     try{ paintMask.delete(); }catch(_){ }
     try{ maskUse.delete(); }catch(_){ }
     return matToImagePayload(src);
+  } finally { src.delete(); }
+}
+
+// Alternative: Sauvola local thresholding for text
+function opTextEnhanceSauvola(srcRGBA, report, options){
+  const src = toMatRGBA(srcRGBA);
+  try{
+    const strength = Math.max(0, Math.min(3, (options && options.strength)|0 || 2));
+    const thin = Math.max(0, Math.min(2, (options && options.thin)|0 || 0));
+    const thicken = Math.max(0, Math.min(2, (options && options.thicken)|0 || 1));
+    const bgEq = !!(options && options.bgEq);
+    const upscale = !!(options && options.upscale);
+    if(report) report(10);
+    let gray = new cv.Mat(); cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+    if(bgEq){
+      const kSize = 61; const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(kSize, kSize));
+      const bg = new cv.Mat(); cv.morphologyEx(gray, bg, cv.MORPH_OPEN, kernel);
+      const fGray = new cv.Mat(); let fBg = new cv.Mat(); gray.convertTo(fGray, cv.CV_32F); bg.convertTo(fBg, cv.CV_32F);
+      const eps = 1.0; { const epsMat=new cv.Mat(fBg.rows,fBg.cols,fBg.type()); epsMat.setTo(new cv.Scalar(eps)); const sum=new cv.Mat(); cv.add(fBg, epsMat, sum); fBg.delete(); fBg=sum; epsMat.delete(); }
+      const norm = new cv.Mat(); cv.divide(fGray, fBg, norm, 1.0);
+      const norm2 = new cv.Mat(); cv.normalize(norm, norm2, 0, 255, cv.NORM_MINMAX);
+      const out8 = new cv.Mat(); norm2.convertTo(out8, cv.CV_8U);
+      gray.delete(); gray = out8;
+      bg.delete(); kernel.delete(); fGray.delete(); fBg.delete(); norm.delete(); norm2.delete();
+    }
+    // Optional upscale to help tiny text
+    let scale = 1;
+    if(upscale){ const hi = new cv.Mat(); cv.resize(gray, hi, new cv.Size(gray.cols*2, gray.rows*2), 0, 0, cv.INTER_CUBIC); gray.delete(); gray = hi; scale=2; }
+    if(report) report(30);
+    // Mild sharpening (unsharp mask)
+    const blurred = new cv.Mat(); cv.GaussianBlur(gray, blurred, new cv.Size(0,0), 1.0, 1.0, cv.BORDER_DEFAULT);
+    const sharp = new cv.Mat(); cv.addWeighted(gray, 1.2, blurred, -0.2, 0, sharp); blurred.delete(); gray.delete(); gray=sharp;
+    // Sauvola threshold
+    const win = Math.max(9, 15 + strength*8); const bsize = (win%2)?win:win+1; const kval = 0.34 + strength*0.06; // 0.34..0.52
+    const f32 = new cv.Mat(); gray.convertTo(f32, cv.CV_32F);
+    const mean = new cv.Mat(); cv.blur(f32, mean, new cv.Size(bsize,bsize));
+    const sq = new cv.Mat(); cv.multiply(f32, f32, sq);
+    const mean2 = new cv.Mat(); cv.blur(sq, mean2, new cv.Size(bsize,bsize));
+    const mm = new cv.Mat(); cv.multiply(mean, mean, mm);
+    const variance = new cv.Mat(); cv.subtract(mean2, mm, variance);
+    const stddev = new cv.Mat(); cv.sqrt(variance, stddev);
+    const R = new cv.Mat(stddev.rows, stddev.cols, stddev.type(), new cv.Scalar(128.0));
+    const sOverR = new cv.Mat(); cv.divide(stddev, R, sOverR);
+    const one = new cv.Mat(sOverR.rows, sOverR.cols, sOverR.type(), new cv.Scalar(1.0));
+    const sTerm = new cv.Mat(); cv.subtract(sOverR, one, sTerm); // (s/R - 1)
+    const kMat = new cv.Mat(sTerm.rows, sTerm.cols, sTerm.type(), new cv.Scalar(kval));
+    const kTerm = new cv.Mat(); cv.multiply(kMat, sTerm, kTerm); // k*(s/R - 1)
+    const base = new cv.Mat(); cv.add(one, kTerm, base); // 1 + ...
+    const T = new cv.Mat(); cv.multiply(mean, base, T); // m*(...)
+    let bin = new cv.Mat(); cv.compare(f32, T, bin, cv.CMP_GT); // 255 for background
+    // Optional morphology to clean edges
+    if(thin>0){ const k = 1 + thin*2; const kx = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(k,k)); const tmp = new cv.Mat(); cv.morphologyEx(bin, tmp, cv.MORPH_OPEN, kx); bin.delete(); bin = tmp; kx.delete(); }
+    if(thicken>0){ const k = 1 + thicken*2; const kx = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(k,k)); const tmp = new cv.Mat(); cv.morphologyEx(bin, tmp, cv.MORPH_CLOSE, kx); bin.delete(); bin = tmp; kx.delete(); }
+    let binUse = bin;
+    if(scale!==1){ const down = new cv.Mat(); cv.resize(bin, down, new cv.Size(src.cols, src.rows), 0,0, cv.INTER_NEAREST); bin.delete(); binUse = down; }
+    const rgba = new cv.Mat(); cv.cvtColor(binUse, rgba, cv.COLOR_GRAY2RGBA, 0);
+    if(report) report(100);
+    // Cleanup
+    f32.delete(); mean.delete(); sq.delete(); mean2.delete(); mm.delete(); variance.delete(); stddev.delete(); R.delete(); sOverR.delete(); one.delete(); sTerm.delete(); kMat.delete(); kTerm.delete(); base.delete(); T.delete();
+    if(binUse!==bin) try{ binUse.delete(); }catch(_){ }
+    return matToImagePayload(rgba);
   } finally { src.delete(); }
 }

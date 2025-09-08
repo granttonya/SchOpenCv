@@ -14,6 +14,8 @@ const $$ = (sel, root=document) => root.querySelector(sel);
 const $$$ = (sel, root=document) => [...root.querySelectorAll(sel)];
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const DPR = () => (window.devicePixelRatio || 1);
+// Simple debounce to coalesce rapid inputs
+const debounce = (fn, delay=80) => { let t; return function(...args){ clearTimeout(t); t = setTimeout(()=>fn.apply(this, args), delay) } };
 // Safe UUID generator (fallback if crypto.randomUUID is unavailable)
 const uuid = () => {
   try{ if(typeof crypto!=='undefined' && typeof crypto.randomUUID==='function') return crypto.randomUUID() }catch(_){ }
@@ -140,7 +142,10 @@ class Viewer extends Emitter {
   }
   requestRender(force=false){
     if(this.renderPending && !force) return; this.renderPending=true;
-    queueMicrotask(()=>{ this.renderPending=false; this._render() });
+    // Use rAF to batch visual updates to frame rate
+    const cb = ()=>{ this.renderPending=false; this._render() };
+    if('requestAnimationFrame' in window){ requestAnimationFrame(cb); }
+    else { queueMicrotask(cb); }
   }
   clear(){ this.ctx.fillStyle = '#0b0e17'; this.ctx.fillRect(0,0,this.w,this.h); this.octx.clearRect(0,0,this.w,this.h); }
   _render(){
@@ -574,7 +579,7 @@ class AppUI {
   _setupRight(){
     // Enhancement controls
     this.brightness=$$('#enh-bright'); this.contrast=$$('#enh-contrast'); this.threshold=$$('#enh-threshold'); this.invert=$$('#enh-invert'); this.gray=$$('#enh-gray'); this.sharpen=$$('#enh-sharpen');
-    const apply=()=>this._applyEnhancements();
+    const apply = debounce(()=>this._applyEnhancements(), 100);
     // Begin a debounced history batch for slider drags
     const beginEnhHistory=()=>{ this._enhHistTimer && clearTimeout(this._enhHistTimer); if(!this._enhHistoryActive){ this._pushUndo('enhance'); this._enhHistoryActive=true; } };
     const endEnhHistory=()=>{ this._enhHistTimer && clearTimeout(this._enhHistTimer); this._enhHistTimer = setTimeout(()=>{ this._enhHistoryActive=false; this._updateUndoRedoButtons && this._updateUndoRedoButtons(); }, 700); };
@@ -599,7 +604,14 @@ class AppUI {
     this.hlAlpha=$$('#hl-alpha');
     this.hlColor=$$('#hl-color');
     try{ const saved=localStorage.getItem('hlWidth'); if(saved && this.hlWidth){ this.hlWidth.value=saved } }catch(_){ }
-    if(this.hlWidth){ this.hlWidth.addEventListener('input', ()=>{ try{ localStorage.setItem('hlWidth', this.hlWidth.value) }catch(_){ } }); }
+    // Hook transparency slider to viewer and persist
+    try{ const a=localStorage.getItem('hlAlpha'); if(this.hlAlpha && a!=null){ this.hlAlpha.value = a } }catch(_){ }
+    if(this.hlAlpha){
+      // Make the control visible to the viewer for live rendering
+      this.viewer.hlAlpha = this.hlAlpha;
+      this.hlAlpha.addEventListener('input', ()=>{ try{ localStorage.setItem('hlAlpha', this.hlAlpha.value) }catch(_){ } this.viewer.requestRender(); });
+    }
+    if(this.hlWidth){ this.hlWidth.addEventListener('input', ()=>{ try{ localStorage.setItem('hlWidth', this.hlWidth.value) }catch(_){ } this.viewer.requestRender(); }); }
     this.hlStop=$$('#hl-stop');
     try{ const s=localStorage.getItem('hlStop'); if(this.hlStop && (s==='0'||s==='1')) this.hlStop.checked = (s!=='0') }catch(_){ }
     if(this.hlStop){ this.hlStop.addEventListener('change', ()=>{ try{ localStorage.setItem('hlStop', this.hlStop.checked?'1':'0') }catch(_){ } }); }
@@ -617,6 +629,7 @@ class AppUI {
     // OpenCV controls + export
     this.cvLoad=$$('#cv-load'); this.cvDeskew=$$('#cv-deskew'); this.cvDenoise=$$('#cv-denoise'); this.cvAdapt=$$('#cv-adapt'); this.cvReset=$$('#cv-reset');
     this.cvText=$$('#cv-text');
+    this.cvText2=$$('#cv-text2');
     this.cvTextStrength=$$('#cv-text-strength');
     this.cvTextThin=$$('#cv-text-thin');
     this.cvTextThicken=$$('#cv-text-thicken');
@@ -764,6 +777,12 @@ class AppUI {
       this.cvText.addEventListener('click', async()=>{
         this._debug('btn:cv-text:click',{});
         await this._withCvProgress(this.cvText, 'text', async(reqId)=>{ if(await need()){ await this._cvTextEnhance(reqId); this._debug('btn:cv-text:done',{reqId}); } });
+      });
+    }
+    if(this.cvText2){
+      this.cvText2.addEventListener('click', async()=>{
+        this._debug('btn:cv-text2:click',{});
+        await this._withCvProgress(this.cvText2, 'text2', async(reqId)=>{ if(await need()){ await this._cvTextEnhance2(reqId); this._debug('btn:cv-text2:done',{reqId}); } });
       });
     }
 
@@ -1890,7 +1909,11 @@ AppUI.prototype._cvTraceComponent = async function(page, x, y){
     const w=window.cvWorker; const onMsg=(ev)=>{
       const d=ev.data||{}; if(d.type==='denoise:result' && (!reqId || d.reqId===reqId)){
         w.removeEventListener('message', onMsg);
-        const out=d.image; const outCanvas=document.createElement('canvas'); outCanvas.width=out.width; outCanvas.height=out.height; outCanvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(out.data), out.width, out.height),0,0);
+        const out=d.image; const outCanvas=document.createElement('canvas'); outCanvas.width=out.width; outCanvas.height=out.height; {
+          const ctx2=outCanvas.getContext('2d'); const data=new Uint8ClampedArray(out.data); for(let i=3;i<data.length;i+=4){ data[i]=255; }
+          ctx2.fillStyle = '#ffffff'; ctx2.fillRect(0,0,out.width,out.height);
+          ctx2.putImageData(new ImageData(data, out.width, out.height),0,0);
+        }
         p.cvCanvas=outCanvas; const ret=this._applyEnhancements(p); if(ret&&typeof ret.then==='function'){ ret.then(()=>resolve()); } else { resolve(); }
       } else if(d.type==='error'){
         try{ this._debug('cv:error', {op:'denoise', message:d.error}); }catch(_){ }
@@ -1913,7 +1936,11 @@ AppUI.prototype._cvTraceComponent = async function(page, x, y){
     const w=window.cvWorker; const onMsg=(ev)=>{
       const d=ev.data||{}; if(d.type==='adaptive:result' && (!reqId || d.reqId===reqId)){
         w.removeEventListener('message', onMsg);
-        const out=d.image; const outCanvas=document.createElement('canvas'); outCanvas.width=out.width; outCanvas.height=out.height; outCanvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(out.data), out.width, out.height),0,0);
+        const out=d.image; const outCanvas=document.createElement('canvas'); outCanvas.width=out.width; outCanvas.height=out.height; {
+          const ctx2=outCanvas.getContext('2d'); const data=new Uint8ClampedArray(out.data); for(let i=3;i<data.length;i+=4){ data[i]=255; }
+          ctx2.fillStyle = '#ffffff'; ctx2.fillRect(0,0,out.width,out.height);
+          ctx2.putImageData(new ImageData(data, out.width, out.height),0,0);
+        }
         p.cvCanvas=outCanvas; const ret=this._applyEnhancements(p); if(ret&&typeof ret.then==='function'){ ret.then(()=>resolve()); } else { resolve(); }
       } else if(d.type==='error'){
         try{ this._debug('cv:error', {op:'adaptive', message:d.error}); }catch(_){ }
@@ -1936,7 +1963,11 @@ AppUI.prototype._cvTraceComponent = async function(page, x, y){
     const w=window.cvWorker; const onMsg=(ev)=>{
       const d=ev.data||{}; if(d.type==='text:result' && (!reqId || d.reqId===reqId)){
         w.removeEventListener('message', onMsg);
-        const out=d.image; const outCanvas=document.createElement('canvas'); outCanvas.width=out.width; outCanvas.height=out.height; outCanvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(out.data), out.width, out.height),0,0);
+        const out=d.image; const outCanvas=document.createElement('canvas'); outCanvas.width=out.width; outCanvas.height=out.height; {
+          const ctx2=outCanvas.getContext('2d'); const data=new Uint8ClampedArray(out.data); for(let i=3;i<data.length;i+=4){ data[i]=255; }
+          ctx2.fillStyle = '#ffffff'; ctx2.fillRect(0,0,out.width,out.height);
+          ctx2.putImageData(new ImageData(data, out.width, out.height),0,0);
+        }
         p.cvCanvas=outCanvas; const ret=this._applyEnhancements(p); if(ret&&typeof ret.then==='function'){ ret.then(()=>resolve()); } else { resolve(); }
       } else if(d.type==='error'){
         try{ this._debug('cv:error', {op:'text', message:d.error}); }catch(_){ }
@@ -1955,6 +1986,37 @@ AppUI.prototype._cvTraceComponent = async function(page, x, y){
   });
 }
 
+  AppUI.prototype._cvTextEnhance2 = function(reqId){
+  const p=this.state.page; if(!p) return; const c=this._sourceCanvas(); if(!c) return;
+  const ctx=c.getContext('2d', { willReadFrequently: true }); const img=ctx.getImageData(0,0,c.width,c.height);
+  if(!(window.cvWorker && window.cvWorkerReady)){ this._toast('Load OpenCV first', 'error'); return }
+  return new Promise((resolve)=>{
+    const w=window.cvWorker; const onMsg=(ev)=>{
+      const d=ev.data||{}; if(d.type==='text2:result' && (!reqId || d.reqId===reqId)){
+        w.removeEventListener('message', onMsg);
+        const out=d.image; const outCanvas=document.createElement('canvas'); outCanvas.width=out.width; outCanvas.height=out.height; {
+          const ctx2=outCanvas.getContext('2d'); const data=new Uint8ClampedArray(out.data); for(let i=3;i<data.length;i+=4){ data[i]=255; }
+          ctx2.fillStyle = '#ffffff'; ctx2.fillRect(0,0,out.width,out.height);
+          ctx2.putImageData(new ImageData(data, out.width, out.height),0,0);
+        }
+        p.cvCanvas=outCanvas; const ret=this._applyEnhancements(p); if(ret&&typeof ret.then==='function'){ ret.then(()=>resolve()); } else { resolve(); }
+      } else if(d.type==='error'){
+        try{ this._debug('cv:error', {op:'text2', message:d.error}); }catch(_){ }
+        try{ this._toast('OpenCV error: '+(d.error||'text2'), 'error') }catch(_){ }
+        try{ w.removeEventListener('message', onMsg) }catch(_){ }
+        resolve();
+      }
+    };
+    w.addEventListener('message', onMsg);
+    const strength = parseInt(this.cvTextStrength?.value||'2')|0;
+    const thin = parseInt(this.cvTextThin?.value||'0')|0;
+    const thicken = parseInt(this.cvTextThicken?.value||'1')|0;
+    const upscale = this.cvTextUpscale ? !!this.cvTextUpscale.checked : true;
+    const bgEq = this.cvBgEq ? !!this.cvBgEq.checked : false;
+    w.postMessage({ type:'textEnhance2', reqId, options:{ strength, thin, thicken, upscale, bgEq }, image:{ data:new Uint8ClampedArray(img.data), width:c.width, height:c.height } });
+  });
+}
+
   AppUI.prototype._cvBgNormalize = function(reqId){
   const p=this.state.page; if(!p) return; const c=this._sourceCanvas(); if(!c) return;
   const ctx=c.getContext('2d', { willReadFrequently: true }); const img=ctx.getImageData(0,0,c.width,c.height);
@@ -1963,7 +2025,11 @@ AppUI.prototype._cvTraceComponent = async function(page, x, y){
     const w=window.cvWorker; const onMsg=(ev)=>{
       const d=ev.data||{}; if(d.type==='bgnorm:result' && (!reqId || d.reqId===reqId)){
         w.removeEventListener('message', onMsg);
-        const out=d.image; const outCanvas=document.createElement('canvas'); outCanvas.width=out.width; outCanvas.height=out.height; outCanvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(out.data), out.width, out.height),0,0);
+        const out=d.image; const outCanvas=document.createElement('canvas'); outCanvas.width=out.width; outCanvas.height=out.height; {
+          const ctx2=outCanvas.getContext('2d'); const data=new Uint8ClampedArray(out.data); for(let i=3;i<data.length;i+=4){ data[i]=255; }
+          ctx2.fillStyle = '#ffffff'; ctx2.fillRect(0,0,out.width,out.height);
+          ctx2.putImageData(new ImageData(data, out.width, out.height),0,0);
+        }
         p.cvCanvas=outCanvas; const ret=this._applyEnhancements(p); if(ret&&typeof ret.then==='function'){ ret.then(()=>resolve()); } else { resolve(); }
       } else if(d.type==='error'){
         try{ this._debug('cv:error', {op:'bgnorm', message:d.error}); }catch(_){ }
@@ -1985,7 +2051,10 @@ AppUI.prototype._cvTraceComponent = async function(page, x, y){
     const w=window.cvWorker; const onMsg=(ev)=>{
       const d=ev.data||{}; if(d.type==='despeckle:result' && (!reqId || d.reqId===reqId)){
         w.removeEventListener('message', onMsg);
-        const out=d.image; const outCanvas=document.createElement('canvas'); outCanvas.width=out.width; outCanvas.height=out.height; outCanvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(out.data), out.width, out.height),0,0);
+        const out=d.image; const outCanvas=document.createElement('canvas'); outCanvas.width=out.width; outCanvas.height=out.height; {
+          const ctx2=outCanvas.getContext('2d'); const data=new Uint8ClampedArray(out.data); for(let i=3;i<data.length;i+=4){ data[i]=255; }
+          ctx2.putImageData(new ImageData(data, out.width, out.height),0,0);
+        }
         p.cvCanvas=outCanvas; const ret=this._applyEnhancements(p); if(ret&&typeof ret.then==='function'){ ret.then(()=>resolve()); } else { resolve(); }
       } else if(d.type==='error'){
         try{ this._debug('cv:error', {op:'despeckle', message:d.error}); }catch(_){ }

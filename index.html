@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Schematic Studio</title>
   <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://docs.opencv.org" crossorigin>
+  <link rel="dns-prefetch" href="https://docs.opencv.org">
+  <link rel="preconnect" href="https://unpkg.com" crossorigin>
+  <link rel="dns-prefetch" href="https://unpkg.com">
   <meta name="color-scheme" content="dark">
   <style>
     /* Minimal icon glyphs */
@@ -104,14 +108,15 @@
         <div class="row key-val"><div class="key">Color</div><div class="value"><input id="hl-color" type="color" value="#ffd166"></div></div>
         <div class="row key-val"><div class="key">Transparency</div><div class="val"><input id="hl-alpha" type="range" min="0" max="100" step="1" value="0"></div></div>
         
-        <div class="row"><label><input id="hl-stop" type="checkbox"> Stop at junctions/symbols</label></div>
+        <div class="row"><label><input id="hl-stop" type="checkbox" checked> Stop at junctions/symbols</label></div>
       </div>
       </div> <!-- end tab-lines -->
 
       <div class="tab-panel" data-tab="text" id="tab-text">
         <div class="panel">
           <h3>Text Enhance</h3>
-          <div class="row"><button id="cv-text" class="btn">Text Enhance</button></div>
+        <div class="row"><button id="cv-text" class="btn">Text Enhance</button></div>
+        <div class="row"><button id="cv-text2" class="btn">Text Enhance (Sauvola)</button></div>
           <div class="row key-val"><div class="key">Text strength</div><div class="value"><input id="cv-text-strength" type="range" min="0" max="3" step="1" value="2"></div></div>
           <div class="row key-val"><div class="key">Thin text</div><div class="value"><input id="cv-text-thin" type="range" min="0" max="2" step="1" value="0"></div></div>
           <div class="row key-val"><div class="key">Thicken</div><div class="value"><input id="cv-text-thicken" type="range" min="0" max="2" step="1" value="1"></div></div>
