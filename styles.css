@@ -12,9 +12,11 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px/1.4 ui-sans-serif
   'toolbar toolbar toolbar'
   'left    main    right'
   'status  status  status';height:100vh;overflow:hidden}
-.toolbar{grid-area:toolbar;background:linear-gradient(180deg,var(--panel),#101426);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;padding:8px 10px;box-shadow:0 2px 10px var(--shadow);position:relative}
+ DevShgOpenCv
 .toolbar .icon{width:16px;height:16px}
 .toolbar button .icon,.toolbar .btn .icon{margin-right:6px}
+
+ main
 .left{grid-area:left;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;min-width:220px;overflow:auto;min-height:0}
 .main{grid-area:main;position:relative;background:#0b0e17}
 .right{grid-area:right;background:var(--panel);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:auto;min-height:0}

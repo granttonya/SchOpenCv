@@ -11,11 +11,17 @@
 */
 
 const $$ = (sel, root=document) => root.querySelector(sel);
+DevShgOpenCv
 const $$$ = (sel, root=document) => [...root.querySelectorAll(sel)];
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const DPR = () => (window.devicePixelRatio || 1);
 // Simple debounce to coalesce rapid inputs
 const debounce = (fn, delay=80) => { let t; return function(...args){ clearTimeout(t); t = setTimeout(()=>fn.apply(this, args), delay) } };
+
+const $$$ = (sel, root=document) => [...root.querySelectorAll(sel)];
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const DPR = () => (window.devicePixelRatio || 1);
+ main
 // Safe UUID generator (fallback if crypto.randomUUID is unavailable)
 const uuid = () => {
   try{ if(typeof crypto!=='undefined' && typeof crypto.randomUUID==='function') return crypto.randomUUID() }catch(_){ }
@@ -140,6 +146,7 @@ class Viewer extends Emitter {
     this.state.x = cx - wx*ns; this.state.y = cy - wy*ns;
     this.requestRender();
   }
+ DevShgOpenCv
   requestRender(force=false){
     if(this.renderPending && !force) return; this.renderPending=true;
     // Use rAF to batch visual updates to frame rate
@@ -147,6 +154,12 @@ class Viewer extends Emitter {
     if('requestAnimationFrame' in window){ requestAnimationFrame(cb); }
     else { queueMicrotask(cb); }
   }
+
+  requestRender(force=false){
+    if(this.renderPending && !force) return; this.renderPending=true;
+    queueMicrotask(()=>{ this.renderPending=false; this._render() });
+  }
+ main
   clear(){ this.ctx.fillStyle = '#0b0e17'; this.ctx.fillRect(0,0,this.w,this.h); this.octx.clearRect(0,0,this.w,this.h); }
   _render(){
     this.clear(); const page = this.page; if(!page?.bitmap) return;
@@ -161,6 +174,7 @@ class Viewer extends Emitter {
       this.svgLayer.style.height = img.height + 'px';
       this.svgLayer.style.transformOrigin = '0 0';
       this.svgLayer.style.transform = `translate(${x}px,${y}px) scale(${scale})`;
+ DevShgOpenCv
     }
     // Grid (optional subtle)
     this._drawGrid();
@@ -433,6 +447,227 @@ function convolveSharpen(ctx, w, h, amount){
         }
       });
     }
+
+    }
+    // Grid (optional subtle)
+    this._drawGrid();
+    // Annotations overlay
+    this._drawAnnotations();
+  }
+  _drawGrid(){
+    const {scale} = this.state; if(scale < 0.2) return;
+    const step = 50; const {x,y} = this.state;
+    const left = -x/scale, top = -y/scale; const right = (this.w-x)/scale, bottom=(this.h-y)/scale;
+    const s = step; this.octx.save(); this.octx.strokeStyle='rgba(255,255,255,0.06)'; this.octx.lineWidth=1;
+    this.octx.beginPath();
+    for(let gx=Math.floor(left/s)*s; gx<right; gx+=s){ const p1=this.worldToScreen(gx,top); const p2=this.worldToScreen(gx,bottom); this.octx.moveTo(p1.x, p1.y); this.octx.lineTo(p2.x,p2.y) }
+    for(let gy=Math.floor(top/s)*s; gy<bottom; gy+=s){ const p1=this.worldToScreen(left,gy); const p2=this.worldToScreen(right,gy); this.octx.moveTo(p1.x, p1.y); this.octx.lineTo(p2.x,p2.y) }
+    this.octx.stroke(); this.octx.restore();
+  }
+  _drawAnnotations(){
+    const page = this.page; if(!page) return; const anns = page.annotations;
+    const ctx=this.octx; ctx.save(); ctx.lineWidth=1; ctx.font='12px ui-sans-serif';
+    for(const a of anns){
+      const layer = page.layers.find(l=>l.id===a.layerId); if(layer && !layer.visible) continue;
+      switch(a.type){
+        case 'rect': this._drawRect(a); break;
+        case 'arrow': this._drawArrow(a); break;
+        case 'text': this._drawText(a); break;
+        case 'measure': this._drawMeasure(a); break;
+        case 'highlight': this._drawHighlight(a); break;
+      }
+    }
+    ctx.restore();
+  }
+  _p(pt){ return this.worldToScreen(pt.x, pt.y) }
+  _drawRect(a){
+    const ctx=this.octx; ctx.save(); ctx.strokeStyle=a.props?.color||'#6df2bf'; ctx.setLineDash(a.props?.dash?[4,4]:[]);
+    const p1=this._p(a.points[0]), p2=this._p(a.points[1]); const x=Math.min(p1.x,p2.x), y=Math.min(p1.y,p2.y), w=Math.abs(p1.x-p2.x), h=Math.abs(p1.y-p2.y);
+    ctx.strokeRect(x,y,w,h); ctx.restore();
+  }
+  _drawArrow(a){
+    const ctx=this.octx; ctx.save(); ctx.strokeStyle=a.props?.color||'#4cc2ff'; ctx.fillStyle=ctx.strokeStyle; ctx.lineWidth=1.5;
+    const p1=this._p(a.points[0]), p2=this._p(a.points[1]);
+    ctx.beginPath(); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.stroke();
+    const ang=Math.atan2(p2.y-p1.y,p2.x-p1.x); const size=8;
+    ctx.beginPath(); ctx.moveTo(p2.x,p2.y); ctx.lineTo(p2.x-size*Math.cos(ang-0.4), p2.y-size*Math.sin(ang-0.4));
+    ctx.lineTo(p2.x-size*Math.cos(ang+0.4), p2.y-size*Math.sin(ang+0.4)); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+  _drawText(a){
+    const ctx=this.octx; ctx.save(); ctx.fillStyle=a.props?.color||'#ffd166'; ctx.strokeStyle='#0009'; ctx.lineWidth=3;
+    const p=this._p(a.points[0]); const text=a.text||''; ctx.font='13px ui-sans-serif';
+    ctx.strokeText(text, p.x+1, p.y+1); ctx.fillText(text, p.x, p.y); ctx.restore();
+  }
+  _drawHighlight(a){
+    const ctx=this.octx; ctx.save();
+    const color=a.props?.color||'#ffd166';
+    ctx.strokeStyle=color; ctx.lineWidth=a.props?.width||4; ctx.lineCap='round';
+    { // apply UI alpha (Transparency slider is 0..100, where 0 = opaque)
+      const t = +(this.hlAlpha?.value||0);
+      const alpha = Math.max(0, Math.min(1, 1 - (t/100)));
+      ctx.globalAlpha = alpha;
+    }
+    ctx.shadowColor=color; ctx.shadowBlur=8;
+    const pts=a.points||[]; if(pts.length<2){ ctx.restore(); return }
+    ctx.beginPath();
+    const p0=this._p(pts[0]); ctx.moveTo(p0.x,p0.y);
+    for(let i=1;i<pts.length;i++){ const p=this._p(pts[i]); ctx.lineTo(p.x,p.y) }
+    ctx.stroke();
+    ctx.restore();
+  }
+  _drawMeasure(a){
+    const ctx=this.octx; ctx.save(); ctx.strokeStyle='#e8ecf1'; ctx.fillStyle='#e8ecf1';
+    const p1=this._p(a.points[0]), p2=this._p(a.points[1]);
+    ctx.setLineDash([6,4]); ctx.beginPath(); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.stroke(); ctx.setLineDash([]);
+    const midx=(p1.x+p2.x)/2, midy=(p1.y+p2.y)/2; const text=a.props?.label||'';
+    if(text){ ctx.font='12px ui-sans-serif'; ctx.fillStyle='#0b0e17'; ctx.strokeStyle='#e8ecf1';
+      const pad=4; const w=ctx.measureText(text).width+pad*2; const h=18;
+      ctx.beginPath(); ctx.roundRect(midx-w/2, midy-20, w, h, 6); ctx.fill(); ctx.stroke();
+      ctx.fillStyle='#e8ecf1'; ctx.fillText(text, midx-w/2+pad, midy-6);
+    }
+    ctx.restore();
+  }
+  _initEvents(){
+    window.addEventListener('resize', ()=>this.resize());
+    // Pointer events for pan + tool delegation
+    this.overlay.style.pointerEvents='auto';
+    this.overlay.addEventListener('contextmenu', e=>e.preventDefault());
+    this.overlay.addEventListener('pointerdown', e=>{
+      this.overlay.setPointerCapture(e.pointerId);
+      const rect=this.overlay.getBoundingClientRect(); const px=e.clientX-rect.left, py=e.clientY-rect.top;
+      const world=this.screenToWorld(px,py);
+      this.emit('pointerdown', {e, px, py, world});
+      const shouldPan = typeof this.shouldPan==='function' ? this.shouldPan() : true;
+      // Pan with middle mouse always; left only if tool indicates panning
+      if(e.button===1 || (e.button===0 && shouldPan)){
+        e.preventDefault();
+        this.drag = {startX:px, startY:py, ox:this.state.x, oy:this.state.y};
+      }
+    });
+    this.overlay.addEventListener('pointermove', e=>{
+      const rect=this.overlay.getBoundingClientRect(); const px=e.clientX-rect.left, py=e.clientY-rect.top;
+      const world=this.screenToWorld(px,py);
+      this.emit('pointermove', {e, px, py, world});
+      if(this.drag){ this.state.x = this.drag.ox + (px - this.drag.startX); this.state.y = this.drag.oy + (py - this.drag.startY); this.requestRender(); }
+    });
+    const end=(e)=>{ this.emit('pointerup',{e}); this.drag=null; };
+    this.overlay.addEventListener('pointerup', end);
+    this.overlay.addEventListener('pointercancel', end);
+    // Wheel zoom (Ctrl or two-finger trackpad)
+    this.overlay.addEventListener('wheel', e=>{
+      e.preventDefault();
+      const rect=this.overlay.getBoundingClientRect(); const cx=e.clientX-rect.left, cy=e.clientY-rect.top;
+      let factor = 1;
+      const delta = (e.deltaY || 0);
+      const z = Math.exp(-delta * 0.0015); // smooth zoom
+      factor = z;
+      if(!e.ctrlKey && Math.abs(delta)<5){ return; }
+      this.zoomAt(factor, cx, cy);
+    }, { passive:false });
+    // Double click to zoom in
+    this.overlay.addEventListener('dblclick', e=>{
+      const rect=this.overlay.getBoundingClientRect(); const cx=e.clientX-rect.left, cy=e.clientY-rect.top;
+      this.zoomAt(1.6, cx, cy);
+    });
+  }
+}
+
+// Enhancement pipeline (runs onto offscreen canvas when params change)
+async function applyEnhancements(bitmap, params){
+  const {brightness=0, contrast=0, threshold=0, invert=false, grayscale=false, sharpen=0} = params||{};
+  const w = bitmap.width, h = bitmap.height;
+  // cap processing size to keep responsive; scale down if too large while preserving effective resolution on display
+  const maxPixels = 4_000_000; // ~4MP
+  const scale = Math.min(1, Math.sqrt(maxPixels/(w*h)));
+  const tw = Math.max(1, Math.round(w*scale)), th = Math.max(1, Math.round(h*scale));
+
+  const off = document.createElement('canvas'); off.width = tw; off.height = th; const ctx = off.getContext('2d', { willReadFrequently: true });
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(bitmap, 0,0,w,h, 0,0,tw,th);
+  let img = ctx.getImageData(0,0,tw,th); let d = img.data;
+
+  // Precompute contrast factor
+  const c = clamp(contrast, -100, 100); const cf = (259*(c+255))/(255*(259-c));
+  const b = clamp(brightness, -100, 100);
+  const thr = clamp(threshold, 0, 100);
+  for(let i=0;i<d.length;i+=4){
+    let r=d[i], g=d[i+1], bgr=d[i+2];
+    // grayscale first if requested (luma)
+    if(grayscale){ const l = (0.2126*r + 0.7152*g + 0.0722*bgr)|0; r=g=bgr=l }
+    // brightness/contrast
+    if(contrast||brightness){ r=cf*(r-128)+128 + b; g=cf*(g-128)+128 + b; bgr=cf*(bgr-128)+128 + b; }
+    // invert
+    if(invert){ r=255-r; g=255-g; bgr=255-bgr; }
+    // threshold (binary) if set
+    if(thr>0){ const l = (r+g+bgr)/3; const t = (thr/100)*255; const v = l>=t?255:0; r=g=bgr=v }
+    d[i] = r<0?0:r>255?255:r; d[i+1] = g<0?0:g>255?255:g; d[i+2] = bgr<0?0:bgr>255?255:bgr;
+  }
+  ctx.putImageData(img,0,0);
+  if(sharpen>0){ convolveSharpen(ctx, tw, th, sharpen) }
+  // If scaled, upscale to original size without smoothing so pixels remain crisp
+  if(scale!==1){
+    const full = document.createElement('canvas'); full.width=w; full.height=h; const fctx=full.getContext('2d', { willReadFrequently: true }); fctx.imageSmoothingEnabled=false;
+    fctx.drawImage(off,0,0,tw,th,0,0,w,h); return full;
+  }
+  return off;
+}
+
+function convolveSharpen(ctx, w, h, amount){
+  const k = amount; // 0..100
+  const a = clamp(k/100, 0, 1);
+  // kernel = identity + a*(sharpen)
+  const wImg = ctx.getImageData(0,0,w,h); const src=wImg.data; const out=ctx.createImageData(w,h); const dst=out.data;
+  const idx=(x,y)=>((y*w+x)<<2);
+  for(let y=1;y<h-1;y++){
+    for(let x=1;x<w-1;x++){
+      const i = idx(x,y); const c = idx(x,y);
+      for(let ch=0;ch<3;ch++){
+        const v = 5*src[c+ch] - src[idx(x-1,y)+ch] - src[idx(x+1,y)+ch] - src[idx(x,y-1)+ch] - src[idx(x,y+1)+ch];
+        const nv = clamp(Math.round(src[c+ch]*(1-a) + v*a), 0, 255);
+        dst[i+ch]=nv;
+      }
+      dst[i+3]=src[c+3];
+    }
+
+
+    if(this.cvAuto){
+      this.cvAuto.addEventListener('click', async()=>{
+        this._debug('btn:cv-auto:click',{});
+        if(!await (async()=>{ if(window.cvWorker && window.cvWorkerReady) return true; try{ await loadOpenCV(this.cvLoad); return true }catch(e){ alert('Failed to load OpenCV'); return false } })()) return;
+        const btn=this.cvAuto; const wasDisabled=!!btn.disabled; btn.classList.add('loading','determinate'); btn.disabled=true;
+        const setP=(pct,label)=>{ try{ btn.style.setProperty('--progress', String(pct)); }catch(_){ } this._setStatusTask(`${label}�?� ${Math.round(pct)}%`); };
+        const req1=uuid(), req2=uuid();
+        const stopBatch = this._beginHistoryBatch && this._beginHistoryBatch('cv:auto-clean');
+        const onMsg=(ev)=>{
+          const d=ev.data||{}; if(d.type==='progress' && (d.reqId===req1||d.reqId===req2)){
+            let pct=0, label='Auto Clean';
+            if(d.op==='denoise'){ pct = (d.value||0)*0.45; label='Denoising'; }
+            if(d.op==='adaptive'){ pct = 45 + (d.value||0)*0.45; label='Adaptive'; }
+            setP(Math.max(0,Math.min(100,pct)), label);
+          }
+        };
+        window.cvWorker && window.cvWorker.addEventListener('message', onMsg);
+        try{
+          await this._cvDenoise(req1);
+          await this._cvAdaptive(req2);
+          let targetSharp = +this.sharpen.value; if(!targetSharp || targetSharp===0){ targetSharp = 10; this.sharpen.value = targetSharp; this.sharpen.dispatchEvent(new Event('input',{bubbles:true})) }
+          setP(92,'Sharpening');
+          await this._applyEnhancements(this.state.page);
+          try{ await this._cvEnsureGraphBuilt(this.state.page); }catch(_){ }
+          this.viewer && this.viewer.requestRender(true);
+          setP(100,'Done');
+        } finally {
+          try{ window.cvWorker && window.cvWorker.removeEventListener('message', onMsg) }catch(_){ }
+          btn.classList.remove('determinate'); btn.style.removeProperty('--progress'); btn.classList.remove('loading');
+          btn.disabled = wasDisabled;
+          this._setStatusTask('Ready');
+          this._debug('btn:cv-auto:done',{});
+          try{ if(this.cvPreview?.checked) this._buildAndShowVectorOverlay(); }catch(_){ }
+        }
+      });
+    }
+main
   }
   ctx.putImageData(out,0,0);
 }
@@ -555,6 +790,7 @@ class AppUI {
     if(this._updateUndoRedoButtons) this._updateUndoRedoButtons();
   }
   _bindViewer(){
+ DevShgOpenCv
     this.state.on('current', ()=>{ this.viewer.setImage(this.state.page); this._renderLayers(); this._refreshStatus(); this._refreshThumbs() });
     this.state.on('pages', ()=>{ this._refreshThumbs(); this._refreshStatus(); this.viewer.setImage(this.state.page) });
     window.addEventListener('keydown', e=>this._hotkeys(e));
@@ -599,6 +835,23 @@ class AppUI {
       const tb=$$('.tool-group.toolbox');
       if(tb){ const b=document.createElement('button'); b.id='tool-highlight'; b.title='Highlight line (6)'; b.innerHTML='<span class="i">==</span> Highlight'; tb.appendChild(b); this.highlightBtn=b; }
     }
+
+    this.state.on('current', ()=>{ this.viewer.setImage(this.state.page); this._refreshRight(); this._refreshStatus(); this._refreshThumbs() });
+    this.state.on('pages', ()=>{ this._refreshThumbs(); this._refreshStatus(); this.viewer.setImage(this.state.page) });
+    window.addEventListener('keydown', e=>this._hotkeys(e));
+  }
+  _setupToolbar(){
+    this.openBtn = $$('#btn-open'); this.saveBtn=$$('#btn-save');
+    this.undoBtn = $$('#btn-undo'); this.redoBtn=$$('#btn-redo');
+    this.fitBtn = $$('#btn-fit'); this.zoomInBtn=$$('#btn-zoom-in'); this.zoomOutBtn=$$('#btn-zoom-out');
+    this.panBtn=$$('#tool-pan'); this.rectBtn=$$('#tool-rect'); this.arrowBtn=$$('#tool-arrow'); this.textBtn=$$('#tool-text'); this.measureBtn=$$('#tool-measure');
+    // Ensure highlight tool button exists in DOM (inject if missing)
+    this.highlightBtn=$$('#tool-highlight');
+    if(!this.highlightBtn){
+      const tb=$$('.tool-group.toolbox');
+      if(tb){ const b=document.createElement('button'); b.id='tool-highlight'; b.title='Highlight line (6)'; b.innerHTML='<span class="i">==</span> Highlight'; tb.appendChild(b); this.highlightBtn=b; }
+    }
+ main
     this.fileInput=$$('#file-input');
     const setTool = t=>{ this.tool=t; this.viewer.shouldPan = ()=> this.tool==='pan'; this._syncToolButtons() };
     const v=this.viewer;
@@ -624,6 +877,7 @@ class AppUI {
     this.measureBtn.addEventListener('click', ()=>setTool('measure'));
     if(this.highlightBtn){ this.highlightBtn.addEventListener('click', ()=>setTool('highlight')) }
     setTool('pan');
+ DevShgOpenCv
     const debugBtn = $$('#btn-debug'); if(debugBtn){ debugBtn.addEventListener('click', ()=>this._toggleDebug()) }
     const helpBtn = $$('#btn-help'); if(helpBtn){ setIcon(helpBtn, svg.help, 'Help'); }
 
@@ -663,10 +917,21 @@ class AppUI {
       this._selectedAnnId = null; this.viewer.selectedId = null; this._syncTextControls && this._syncTextControls();
       if(this.tool==='pan') return; // viewer will pan by default
       e.preventDefault();
+
+    const debugBtn = $$('#btn-debug'); if(debugBtn){ debugBtn.addEventListener('click', ()=>this._toggleDebug()) }
+
+    // Tool interactions bridged through viewer pointer events
+    let drawing=null;
+    this.viewer.on('pointerdown', ({e, px, py, world})=>{
+      if(!this.state.page) return;
+      if(this.tool==='pan') return; // viewer will pan by default
+      e.preventDefault();
+ main
       if(this.tool==='highlight'){
         this._highlightAt(world).catch(err=>{ this._debug('highlight:error', String(err&&err.message||err)) });
         return;
       }
+ DevShgOpenCv
       if(this.tool==='text'){
         const text = prompt('Enter label text');
         if(text){ this._addAnnotation({type:'text', points:[world], text, props:{color:(this.symColor?.value||'#000000')}}); }
@@ -709,13 +974,38 @@ class AppUI {
       this._clearPreview();
     });
   }
+
+      if(this.tool==='text'){
+        const text = prompt('Enter label text');
+        if(text){ this._addAnnotation({type:'text', points:[world], text, props:{color:'#ffd166'}}); }
+        return false;
+      }
+      // start two-point shapes
+      drawing = { start: world, last: world };
+    });
+    this.viewer.on('pointermove', ({world})=>{
+      if(!drawing) return; drawing.last = world; this._previewTwoPoint(drawing.start, drawing.last);
+    });
+    this.viewer.on('pointerup', ()=>{
+      if(!drawing) return; const {start,last}=drawing; drawing=null;
+      if(this.tool==='rect') this._addAnnotation({type:'rect', points:[start,last], props:{color:'#6df2bf'}});
+      if(this.tool==='arrow') this._addAnnotation({type:'arrow', points:[start,last], props:{color:'#4cc2ff'}});
+      if(this.tool==='measure') this._addMeasure(start,last);
+      this._clearPreview();
+    });
+  }
+ main
   _setupLeft(){
     this.thumbsWrap = $$('.thumbs');
   }
   _setupRight(){
     // Enhancement controls
     this.brightness=$$('#enh-bright'); this.contrast=$$('#enh-contrast'); this.threshold=$$('#enh-threshold'); this.invert=$$('#enh-invert'); this.gray=$$('#enh-gray'); this.sharpen=$$('#enh-sharpen');
+ DevShgOpenCv
     const apply = debounce(()=>this._applyEnhancements(), 100);
+=======
+    const apply=()=>this._applyEnhancements();
+ main
     // Begin a debounced history batch for slider drags
     const beginEnhHistory=()=>{ this._enhHistTimer && clearTimeout(this._enhHistTimer); if(!this._enhHistoryActive){ this._pushUndo('enhance'); this._enhHistoryActive=true; } };
     const endEnhHistory=()=>{ this._enhHistTimer && clearTimeout(this._enhHistTimer); this._enhHistTimer = setTimeout(()=>{ this._enhHistoryActive=false; this._updateUndoRedoButtons && this._updateUndoRedoButtons(); }, 700); };
@@ -755,6 +1045,7 @@ class AppUI {
     try{ const c=localStorage.getItem('hlColor'); if(this.hlColor && c){ this.hlColor.value=c } }catch(_){ }
     if(this.hlColor){ this.hlColor.addEventListener('input', ()=>{ try{ localStorage.setItem('hlColor', this.hlColor.value) }catch(_){ } }); }
 
+ DevShgOpenCv
     // Layers UI
     this.layersList=$$('#layers-list'); this.layerAdd=$$('#layer-add'); this.layerRename=$$('#layer-rename'); this.layerDelete=$$('#layer-delete'); this.layerActive=$$('#layer-active');
     this.layerAdd.addEventListener('click', ()=>this._addLayer());
@@ -1006,18 +1297,175 @@ class AppUI {
       });
     }
 
+    // Layers UI
+    this.layersList=$$('#layers-list'); this.layerAdd=$$('#layer-add'); this.layerRename=$$('#layer-rename'); this.layerDelete=$$('#layer-delete'); this.layerActive=$$('#layer-active');
+    this.layerAdd.addEventListener('click', ()=>this._addLayer());
+    this.layerRename.addEventListener('click', ()=>this._renameActiveLayer());
+    this.layerDelete.addEventListener('click', ()=>this._deleteActiveLayer());
+    this.layerActive.addEventListener('change', ()=>{ const id=this.layerActive.value; this._setActiveLayer(id) });
+
+    // OpenCV controls + export
+    this.cvLoad=$$('#cv-load'); this.cvDeskew=$$('#cv-deskew'); this.cvDenoise=$$('#cv-denoise'); this.cvAdapt=$$('#cv-adapt'); this.cvReset=$$('#cv-reset');
+    this.cvText=$$('#cv-text');
+    this.cvTextStrength=$$('#cv-text-strength');
+    this.cvTextThin=$$('#cv-text-thin');
+    this.cvTextThicken=$$('#cv-text-thicken');
+    this.cvTextUpscale=$$('#cv-text-upscale');
+    this.cvBgEq=$$('#cv-bg-eq');
+    this.cvBgNorm=$$('#cv-bgnorm');
+    this.cvDespeckle=$$('#cv-despeckle');
+    this.cvSpeckSize=$$('#cv-speck-size');
+    this.cvAutoClean=$$('#cv-autoclean');
+    this.cvAuto=$$('#cv-auto');
+    this.cvExport=$$('#cv-export-svg');
+    this.cvPreview=$$('#cv-preview');
+    this.cvSimplify=$$('#cv-simplify');
+    this.cvSnap=$$('#cv-snap');
+    this.cvStroke=$$('#cv-stroke');
+    this.cvColor=$$('#cv-color');
+    this.cvBridge=$$('#cv-bridge');
+    this.cvIgnoreText=$$('#cv-ignore-text');
+    this.exportPng=$$('#btn-export-png');
+    this.exportZip=$$('#btn-export-zip');
+    this.exportMerge=$$('#export-merge');
+    const need=async()=>{ if(window.cvWorker && window.cvWorkerReady) return true; try{ await loadOpenCV(this.cvLoad) ; return true }catch(e){ alert('Failed to load OpenCV'); return false } };
+    this.cvLoad.addEventListener('click', async()=>{ this._debug('btn:cv-load:click',{}); await this._withBusy(this.cvLoad, async()=>{ await need(); this._debug('btn:cv-load:done',{ready:!!(window.cvWorker&&window.cvWorkerReady)}); }) });
+    this.cvDeskew.addEventListener('click', async()=>{ this._debug('btn:cv-deskew:click',{}); await this._withCvProgress(this.cvDeskew, 'deskew', async(reqId)=>{ if(await need()){ await this._cvDeskew(reqId); this._debug('btn:cv-deskew:done',{reqId}); } }) });
+    this.cvDenoise.addEventListener('click', async()=>{ this._debug('btn:cv-denoise:click',{}); await this._withCvProgress(this.cvDenoise, 'denoise', async(reqId)=>{ if(await need()){ await this._cvDenoise(reqId); this._debug('btn:cv-denoise:done',{reqId}); } }) });
+    this.cvAdapt.addEventListener('click', async()=>{ this._debug('btn:cv-adaptive:click',{}); await this._withCvProgress(this.cvAdapt, 'adaptive', async(reqId)=>{ if(await need()){ await this._cvAdaptive(reqId); this._debug('btn:cv-adaptive:done',{reqId}); } }) });
+    if(this.cvBgNorm){ this.cvBgNorm.addEventListener('click', async()=>{ this._debug('btn:cv-bgnorm:click',{}); await this._withCvProgress(this.cvBgNorm, 'bgnorm', async(reqId)=>{ if(await need()){ await this._cvBgNormalize(reqId); this._debug('btn:cv-bgnorm:done',{reqId}); } }) }); }
+    if(this.cvDespeckle){ this.cvDespeckle.addEventListener('click', async()=>{ this._debug('btn:cv-despeckle:click',{}); await this._withCvProgress(this.cvDespeckle, 'despeckle', async(reqId)=>{ if(await need()){ await this._cvDespeckle(reqId); this._debug('btn:cv-despeckle:done',{reqId}); } }) }); }
+    this.cvReset.addEventListener('click', async()=>{ this._debug('btn:cv-reset:click',{}); await this._withBusy(this.cvReset, async()=>{ const p=this.state.page; if(!p){ this._debug('btn:cv-reset:skip',{reason:'no page'}); return; } this._pushUndo('cv:reset'); p.cvCanvas=null; await this._applyEnhancements(p); this._updateUndoRedoButtons && this._updateUndoRedoButtons(); this._debug('btn:cv-reset:done',{}); }) });
+    // Auto Text Cleanup: BG Normalize -> Despeckle -> Text Enhance
+    this.cvTextAuto=$$('#cv-text-auto');
+    this.cvOcrReplace=$$('#cv-ocr-replace');
+    this.cvOcrErase=$$('#cv-ocr-erase');
+    this.cvOcrConf=$$('#cv-ocr-conf');
+    if(this.cvTextAuto){
+      this.cvTextAuto.addEventListener('click', async()=>{
+        this._debug('btn:cv-text-auto:click',{});
+        if(!await need()) return;
+        const btn=this.cvTextAuto; const wasDisabled=!!btn.disabled; btn.classList.add('loading','determinate'); btn.disabled=true;
+        const setP=(pct,label)=>{ try{ btn.style.setProperty('--progress', String(pct)); }catch(_){ } this._setStatusTask(`${label}�?� ${Math.round(pct)}%`); };
+        const reqA=uuid(), reqB=uuid(), reqC=uuid();
+        const stopBatch = this._beginHistoryBatch && this._beginHistoryBatch('cv:text-auto');
+        const onMsg=(ev)=>{
+          const d=ev.data||{}; if(d.type==='progress' && (d.reqId===reqA||d.reqId===reqB||d.reqId===reqC)){
+            let pct=0, label='Text Cleanup';
+            if(d.reqId===reqA){ pct = (d.value||0)*0.33; label='BG Equalize'; }
+            else if(d.reqId===reqB){ pct = 33 + (d.value||0)*0.33; label='Despeckle'; }
+            else if(d.reqId===reqC){ pct = 66 + (d.value||0)*0.34; label='Text Enhance'; }
+            setP(Math.max(0,Math.min(100,pct)), label);
+          }
+        };
+        window.cvWorker && window.cvWorker.addEventListener('message', onMsg);
+        try{
+          await this._cvBgNormalize(reqA);
+          await this._cvDespeckle(reqB);
+          const prevBgEq = this.cvBgEq ? !!this.cvBgEq.checked : false; if(this.cvBgEq) this.cvBgEq.checked = false;
+          try{ await this._cvTextEnhance(reqC); } finally { if(this.cvBgEq) this.cvBgEq.checked = prevBgEq; }
+          setP(100,'Done');
+        } finally {
+          try{ window.cvWorker && window.cvWorker.removeEventListener('message', onMsg) }catch(_){ }
+          btn.classList.remove('determinate'); btn.style.removeProperty('--progress'); btn.classList.remove('loading');
+          btn.disabled = wasDisabled;
+          this._setStatusTask('Ready');
+          this._debug('btn:cv-text-auto:done',{});
+          try{ stopBatch && stopBatch(); }catch(_){ }
+        }
+      });
+    }
+
+    if(this.cvOcrReplace){
+      this.cvOcrReplace.addEventListener('click', async()=>{
+        this._debug('btn:cv-ocr:click',{});
+        await this._withBusy(this.cvOcrReplace, async()=>{
+          await this._runOcrReplace();
+        });
+      });
+    }
+    if(this.cvAutoClean){
+      this.cvAutoClean.addEventListener('click', async()=>{
+        this._debug('btn:cv-autoclean:click',{});
+        if(!await need()) return;
+        const btn=this.cvAutoClean; const wasDisabled=!!btn.disabled; btn.classList.add('loading','determinate'); btn.disabled=true;
+        const setP=(pct,label)=>{ try{ btn.style.setProperty('--progress', String(pct)); }catch(_){ } this._setStatusTask(`${label}… ${Math.round(pct)}%`); };
+        const req1=uuid(), req2=uuid();
+        const onMsg=(ev)=>{
+          const d=ev.data||{}; if(d.type==='progress' && (d.reqId===req1||d.reqId===req2)){
+            let pct=0, label='Auto Clean';
+            if(d.op==='denoise'){ pct = (d.value||0)*0.45; label='Denoising'; }
+            if(d.op==='adaptive'){ pct = 45 + (d.value||0)*0.45/1; label='Adaptive'; }
+            setP(Math.max(0,Math.min(100,pct)), label);
+          }
+        };
+        window.cvWorker && window.cvWorker.addEventListener('message', onMsg);
+        try{
+          // Denoise -> Adaptive -> Sharpen (if sharpen==0, set to 10)
+          await this._cvDenoise(req1);
+          await this._cvAdaptive(req2);
+          // Sharpen stage
+          let targetSharp = +this.sharpen.value; if(!targetSharp || targetSharp===0){ targetSharp = 10; this.sharpen.value = targetSharp; this.sharpen.dispatchEvent(new Event('input',{bubbles:true})) }
+          setP(92,'Sharpening');
+          await this._applyEnhancements(this.state.page);
+          setP(100,'Done');
+        } finally {
+          try{ window.cvWorker && window.cvWorker.removeEventListener('message', onMsg) }catch(_){ }
+          btn.classList.remove('determinate'); btn.style.removeProperty('--progress'); btn.classList.remove('loading');
+          btn.disabled = wasDisabled;
+          this._setStatusTask('Ready');
+          this._debug('btn:cv-autoclean:done',{});
+          try{ stopBatch && stopBatch(); }catch(_){ }
+          try{ if(this.cvPreview?.checked) this._buildAndShowVectorOverlay(); }catch(_){ }
+        }
+      });
+    }
+
+    if(this.cvExport){
+      this.cvExport.addEventListener('click', async()=>{
+        this._debug('btn:cv-export-svg:click',{});
+        const p=this.state.page; if(!p){ this._toast('No page to export','error'); return }
+        // Ensure graph exists based on current processed/cv canvas
+        try{ await this._cvEnsureGraphBuilt(p); }catch(_){ /* try to load and retry */ try{ await need(); await this._cvEnsureGraphBuilt(p); }catch(e){ this._toast('Failed to prepare graph for export','error'); return } }
+        const btn=this.cvExport; const wasDisabled=!!btn.disabled; btn.classList.add('loading'); btn.disabled=true;
+        const w=window.cvWorker; if(!(w&&window.cvWorkerReady)){ this._toast('OpenCV worker not ready','error'); btn.classList.remove('loading'); btn.disabled=wasDisabled; return }
+        const onMsg=(ev)=>{
+          const d=ev.data||{}; if(d.type==='exportSVG:result' && d.id===p.id){
+            try{ w.removeEventListener('message', onMsg) }catch(_){ }
+            try{
+              const blob = new Blob([d.svg||''], {type:'image/svg+xml'});
+              const url = URL.createObjectURL(blob);
+              const name = (p.name||'page')+'.svg';
+              const a=document.createElement('a'); a.href=url; a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url), 5000);
+              this._debug('export:svg:done',{bytes:(d.svg||'').length});
+            }finally{ btn.classList.remove('loading'); btn.disabled=wasDisabled; }
+          }
+        };
+        w.addEventListener('message', onMsg);
+        const stroke = this.cvColor?.value || '#000';
+        const strokeWidth = parseFloat(this.cvStroke?.value||'2')||2;
+        const simplify = parseFloat(this.cvSimplify?.value||'1')||1;
+        const snap = this.cvSnap?.checked ? 1 : 0;
+        w.postMessage({ type:'exportSVG', id:p.id, options:{ simplify, snap, stroke, strokeWidth } });
+      });
+    }
+
+ main
     if(this.cvText){
       this.cvText.addEventListener('click', async()=>{
         this._debug('btn:cv-text:click',{});
         await this._withCvProgress(this.cvText, 'text', async(reqId)=>{ if(await need()){ await this._cvTextEnhance(reqId); this._debug('btn:cv-text:done',{reqId}); } });
       });
     }
+ DevShgOpenCv
     if(this.cvText2){
       this.cvText2.addEventListener('click', async()=>{
         this._debug('btn:cv-text2:click',{});
         await this._withCvProgress(this.cvText2, 'text2', async(reqId)=>{ if(await need()){ await this._cvTextEnhance2(reqId); this._debug('btn:cv-text2:done',{reqId}); } });
       });
     }
+
+ main
 
     if(this.exportPng){
       this.exportPng.addEventListener('click', async()=>{
@@ -1042,9 +1490,15 @@ class AppUI {
     this.cvBridge && this.cvBridge.addEventListener('input', ()=>{ if(this.cvPreview?.checked) { this._buildAndShowVectorOverlay(); } });
     this.cvIgnoreText && this.cvIgnoreText.addEventListener('change', async()=>{ try{ if(this.cvPreview?.checked){ await this._cvEnsureGraphBuilt(this.state.page); await this._buildAndShowVectorOverlay(); } }catch(_){ } });
   }
+ DevShgOpenCv
   _renderLayers(){
     const p=this.state.page; const list=this.layersList; const activeSel=this.layerActive; list.innerHTML=''; activeSel.innerHTML='';
     if(!p){ return }
+
+  _renderLayers(){
+    const p=this.state.page; const list=this.layersList; const activeSel=this.layerActive; list.innerHTML=''; activeSel.innerHTML='';
+    if(!p){ return }
+ main
     p.layers.forEach(l=>{
       const row=document.createElement('div'); row.className='layer-row'+(l.id===p.activeLayerId?' active':''); row.dataset.id=l.id;
       row.innerHTML = `
@@ -1066,6 +1520,7 @@ class AppUI {
     nameEl.addEventListener('blur', done, {once:true});
     nameEl.addEventListener('keydown', onKey);
   }
+DevShgOpenCv
   _syncTextControls(){
     const ann = this._findAnnotationById(this._selectedAnnId);
     const isText = !!(ann && ann.type==='text');
@@ -1109,6 +1564,7 @@ class AppUI {
     // Default
     wrap.innerHTML = '<div class="muted">No editable properties for this item.</div>';
   }
+
   _setupRightTabs(){
     const tabsWrap = document.getElementById('right-tabs'); if(!tabsWrap) return;
     // Hide any old loose panels (we moved content into tab panels)
@@ -1213,6 +1669,7 @@ class AppUI {
     this._setStatusTask('Ready');
     this.viewer.on('pointermove', ({px,py})=>{ this.statusPos.textContent = `x:${px|0} y:${py|0}` });
   }
+ DevShgOpenCv
   _setupDnD(){
     const drop=$$('.drop-overlay'); const main=$$('.main');
     const on=()=>drop.classList.add('show'); const off=()=>drop.classList.remove('show');
@@ -1294,6 +1751,68 @@ class AppUI {
     return { blob: json, name: 'project.json' };
   }
 
+
+  _setupDnD(){
+    const drop=$$('.drop-overlay'); const main=$$('.main');
+    const on=()=>drop.classList.add('show'); const off=()=>drop.classList.remove('show');
+    ['dragenter','dragover'].forEach(ev=>main.addEventListener(ev, e=>{ e.preventDefault(); on() }));
+    ['dragleave','drop'].forEach(ev=>main.addEventListener(ev, e=>{ e.preventDefault(); off() }));
+    main.addEventListener('drop', async e=>{ const files=[...e.dataTransfer.files]; if(!files.length){ return } this._debug('drop', {count:files.length, names:files.map(f=>f.name)}); await this._importFiles(files) });
+  }
+  _setupHelp(){
+    this.help=$$('.help'); $$('#btn-help').addEventListener('click',()=>this.help.classList.toggle('show'));
+  }
+
+  async _exportPNG(){
+    const p=this.state.page; if(!p){ this._toast('No page to export','error'); return }
+    // Base image: processed (with enhancements) or cv canvas or original bitmap
+    let base = p.processedCanvas || p.cvCanvas || null;
+    if(!base){
+      const c=document.createElement('canvas'); c.width=p.bitmap.width; c.height=p.bitmap.height; c.getContext('2d').drawImage(p.bitmap,0,0); base=c;
+    }
+    const out=document.createElement('canvas'); out.width=base.width; out.height=base.height; const ctx=out.getContext('2d');
+    ctx.imageSmoothingEnabled=false; ctx.drawImage(base,0,0);
+    const includeOverlay = this.exportMerge ? !!this.exportMerge.checked : false;
+    if(includeOverlay){
+      // Optionally include vector overlay if preview is enabled; ensure it's ready
+      try{
+        if(this.cvPreview?.checked){ await this._buildAndShowVectorOverlay(); }
+      }catch(_){ }
+      // Draw vector overlay if available
+      try{
+        const url = (this.state.page && this.state.page.vectorOverlayUrl) || null;
+        if(url){ await new Promise((resolve,reject)=>{ const img=new Image(); img.onload=()=>{ try{ ctx.drawImage(img,0,0); }catch(_){} resolve(); }; img.onerror=()=>resolve(); img.src=url; }); }
+      }catch(_){ }
+      // Draw annotations (rect/arrow/text/measure/highlight)
+      this._drawAnnotationsToCanvas(ctx, p);
+    }
+    const dataUrl = out.toDataURL('image/png');
+    const name = (p.name||'page').replace(/\.[a-z0-9]+$/i,'');
+    download(`${name}-export.png`, dataUrl);
+    this._debug('export:png:done', { w:out.width, h:out.height, overlay:includeOverlay });
+  }
+
+  async _exportPNGBlob(){
+    const p=this.state.page; if(!p) throw new Error('No page');
+    const includeOverlay = !!(this.exportMerge && this.exportMerge.checked);
+    const base = p.processedCanvas || p.cvCanvas || this._sourceCanvas(); if(!base) throw new Error('No canvas');
+    const out=document.createElement('canvas'); out.width=base.width; out.height=base.height; const ctx=out.getContext('2d'); ctx.drawImage(base,0,0);
+    if(includeOverlay){
+      try{ if(this.cvPreview?.checked){ await this._buildAndShowVectorOverlay(); } }catch(_){ }
+      try{ const url=(this.state.page && this.state.page.vectorOverlayUrl)||null; if(url){ await new Promise((resolve)=>{ const img=new Image(); img.onload=()=>{ try{ ctx.drawImage(img,0,0); }catch(_){} resolve(); }; img.onerror=()=>resolve(); img.src=url; }); } }catch(_){ }
+      this._drawAnnotationsToCanvas(ctx, p);
+    }
+    const blob = await new Promise(res=> out.toBlob(res, 'image/png'));
+    return { blob, name:(p.name||'page').replace(/\.[a-z0-9]+$/i,'')+"-export.png" };
+  }
+
+  async _exportProjectBlob(){
+    const proj = await this._projectSnapshot();
+    const json = new Blob([JSON.stringify(proj,null,2)], {type:'application/json'});
+    return { blob: json, name: 'project.json' };
+  }
+
+ main
   async _exportSVGBlob(){
     const p=this.state.page; if(!p) throw new Error('No page');
     try{ await this._cvEnsureGraphBuilt(p); }catch(_){ }
@@ -1305,6 +1824,7 @@ class AppUI {
       const strokeWidth = parseFloat(this.cvStroke?.value||'2')||2; const simplify=parseFloat(this.cvSimplify?.value||'1')||1; const snap=this.cvSnap?.checked?1:0;
       w.postMessage({ type:'exportSVG', id:p.id, options:{ simplify, snap, stroke, strokeWidth } });
       setTimeout(()=>{ try{ w.removeEventListener('message', onMsg) }catch(_){ } resolve(null); }, 5000);
+DevShgOpenCv
     });
   }
 
@@ -1418,6 +1938,98 @@ class AppUI {
       w.postMessage({ type:'exportSVG', id:p.id, options:{ simplify, snap, stroke, strokeWidth } });
     });
   }
+    });
+  }
+
+  async _exportZIP(){
+    const files = [];
+    try{ const png = await this._exportPNGBlob(); files.push(png); }catch(_){ }
+    try{ const svg = await this._exportSVGBlob(); if(svg) files.push(svg); }catch(_){ }
+    try{ const proj = await this._exportProjectBlob(); files.push(proj); }catch(_){ }
+    const zipBlob = await makeZip(files);
+    const url = await toDataURL(zipBlob);
+    const base=(this.state.page?.name||'schematic').replace(/\.[a-z0-9]+$/i,'');
+    download(`${base}-export.zip`, url);
+  }
+
+  _drawAnnotationsToCanvas(ctx, page){
+    if(!page) return;
+    ctx.save();
+    for(const a of page.annotations||[]){
+      const layer = page.layers.find(l=>l.id===a.layerId); if(layer && !layer.visible) continue;
+      switch(a.type){
+        case 'rect': {
+          ctx.save(); ctx.strokeStyle=a.props?.color||'#6df2bf'; ctx.setLineDash(a.props?.dash?[4,4]:[]);
+          const p1=a.points[0], p2=a.points[1]; const x=Math.min(p1.x,p2.x), y=Math.min(p1.y,p2.y), w=Math.abs(p1.x-p2.x), h=Math.abs(p1.y-p2.y);
+          ctx.strokeRect(x,y,w,h); ctx.restore();
+          break;
+        }
+        case 'arrow': {
+          ctx.save(); const color=a.props?.color||'#4cc2ff'; ctx.strokeStyle=color; ctx.fillStyle=color; ctx.lineWidth=1.5;
+          const p1=a.points[0], p2=a.points[1]; ctx.beginPath(); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.stroke();
+          const ang=Math.atan2(p2.y-p1.y,p2.x-p1.x); const size=8; ctx.beginPath(); ctx.moveTo(p2.x,p2.y);
+          ctx.lineTo(p2.x-size*Math.cos(ang-0.4), p2.y-size*Math.sin(ang-0.4)); ctx.lineTo(p2.x-size*Math.cos(ang+0.4), p2.y-size*Math.sin(ang+0.4)); ctx.closePath(); ctx.fill();
+          ctx.restore();
+          break;
+        }
+        case 'text': {
+          ctx.save(); ctx.fillStyle=a.props?.color||'#ffd166'; ctx.strokeStyle='#0009'; ctx.lineWidth=3; ctx.font='13px ui-sans-serif';
+          const p0=a.points[0]; const text=a.text||''; ctx.strokeText(text, p0.x+1, p0.y+1); ctx.fillText(text, p0.x, p0.y); ctx.restore();
+          break;
+        }
+        case 'measure': {
+          ctx.save(); ctx.strokeStyle='#e8ecf1'; ctx.fillStyle='#e8ecf1'; ctx.setLineDash([6,4]);
+          const p1=a.points[0], p2=a.points[1]; ctx.beginPath(); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.stroke(); ctx.setLineDash([]);
+          const text=a.props?.label||''; if(text){ const midx=(p1.x+p2.x)/2, midy=(p1.y+p2.y)/2; ctx.font='12px ui-sans-serif'; ctx.fillStyle='#0b0e17'; ctx.strokeStyle='#e8ecf1'; const pad=4; const w=ctx.measureText(text).width+pad*2; const h=18; if(ctx.roundRect){ ctx.beginPath(); ctx.roundRect(midx-w/2, midy-20, w, h, 6); ctx.fill(); ctx.stroke(); } else { ctx.fillRect(midx-w/2, midy-20, w, h); ctx.strokeRect(midx-w/2, midy-20, w, h); } ctx.fillStyle='#e8ecf1'; ctx.fillText(text, midx-w/2+pad, midy-6); }
+          ctx.restore();
+          break;
+        }
+        case 'highlight': {
+          ctx.save(); const color=a.props?.color||'#ffd166';
+          const alphaCtl = (this.hlAlpha && +this.hlAlpha.value) || 0; const alpha = Math.max(0, Math.min(1, 1 - (alphaCtl/100)));
+          ctx.globalAlpha = alpha; ctx.strokeStyle=color; ctx.lineWidth=a.props?.width||4; ctx.lineCap='round'; ctx.shadowColor=color; ctx.shadowBlur=8;
+          const pts=a.points||[]; if(pts.length>=2){ ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); for(let i=1;i<pts.length;i++){ ctx.lineTo(pts[i].x, pts[i].y) } ctx.stroke(); }
+          ctx.restore();
+          break;
+        }
+      }
+    }
+    ctx.restore();
+  }
+  _setVectorOverlay(url){
+    const p=this.state.page; if(!p) return;
+    // Revoke previous
+    try{ if(p.vectorOverlayUrl && p.vectorOverlayUrl!==url) URL.revokeObjectURL(p.vectorOverlayUrl) }catch(_){ }
+    p.vectorOverlayUrl = url||null;
+    if(url){ this.viewer.svgLayer.src = url; this.viewer.svgLayer.style.display='block'; this.viewer.requestRender(); }
+    else { this.viewer.svgLayer.removeAttribute('src'); this.viewer.svgLayer.style.display='none'; this.viewer.requestRender(); }
+  }
+  async _buildAndShowVectorOverlay(){
+    const p=this.state.page; if(!p) return; const w=window.cvWorker;
+    if(!(w&&window.cvWorkerReady)){ try{ await loadOpenCV(this.cvLoad) }catch(e){ this._toast('OpenCV not ready','error'); return } }
+    await this._cvEnsureGraphBuilt(p);
+    const simplify = parseFloat(this.cvSimplify?.value||'1')||1;
+    const snap = this.cvSnap?.checked ? 1 : 0;
+    return new Promise((resolve)=>{
+      const onMsg=(ev)=>{
+        const d=ev.data||{}; if(d.type==='exportSVG:result' && d.id===p.id){
+          try{ w.removeEventListener('message', onMsg) }catch(_){ }
+          try{
+            const blob = new Blob([d.svg||''], {type:'image/svg+xml'});
+            const url = URL.createObjectURL(blob);
+            this._setVectorOverlay(url);
+            this._debug('preview:vector:ready', { bytes:(d.svg||'').length, simplify, snap });
+          }catch(_){ }
+          resolve();
+        }
+      };
+      w.addEventListener('message', onMsg);
+      const stroke = this.cvColor?.value || '#00aaff';
+      const strokeWidth = parseFloat(this.cvStroke?.value||'2')||2;
+      w.postMessage({ type:'exportSVG', id:p.id, options:{ simplify, snap, stroke, strokeWidth } });
+    });
+  }
+ main
   _setupDebugPanel(){
     this.debugPanel = $$('#debug-panel'); this.debugMemo = $$('#debug-memo'); this.debugCopy=$$('#debug-copy'); this.debugClear=$$('#debug-clear');
     if(this.debugCopy) this.debugCopy.addEventListener('click', ()=>{ try{ this.debugMemo.select(); document.execCommand('copy'); this._toast('Copied debug memo','ok') }catch(_){ navigator.clipboard?.writeText(this.debugMemo.value).then(()=>this._toast('Copied debug memo','ok')) } });
@@ -1466,7 +2078,11 @@ class AppUI {
     this.state.on('current', ()=>{ this.viewer.setImage(this.state.page); if(this.cvPreview?.checked){ this._buildAndShowVectorOverlay(); } else { this._setVectorOverlay(null); } refresh(); this._refreshThumbs() });
   }
   _refreshStatus(){ const v=this.viewer; this.statusZoom.textContent = `${(v.state.scale*100)|0}%`; this.statusPage.textContent=this.state.page?`${this.state.current+1}/${this.state.pages.length}`:'0/0' }
+ DevShgOpenCv
   _refreshRight(){ this._renderLayers(); }
+
+  _refreshRight(){ this._renderLayers(); }
+ main
   _syncToolButtons(){
     const map = {pan:this.panBtn, rect:this.rectBtn, arrow:this.arrowBtn, text:this.textBtn, measure:this.measureBtn, highlight:this.highlightBtn};
     Object.entries(map).forEach(([k,btn])=>btn.setAttribute('aria-pressed', String(this.tool===k)));
@@ -1474,6 +2090,7 @@ class AppUI {
   async _importFiles(files){
     let ok=0;
     if(files && files.length){ this._pushUndo('import'); }
+DevShgOpenCv
     for(const f of files){
       try{
         this._debug('import:start', {name:f.name, type:f.type});
@@ -1492,6 +2109,21 @@ class AppUI {
         const bmp = await fileToBitmap(f);
         this._debug('import:decoded', {name:f.name, width:bmp.width, height:bmp.height, ctor:bmp.constructor?.name});
         const page = this.state.addPage(f.name, bmp);
+
+    for(const f of files){
+      try{
+        this._debug('import:start', {name:f.name, type:f.type});
+        if(f.type==='application/json' || f.name.toLowerCase().endsWith('.json')){
+          const txt = await f.text(); const proj = JSON.parse(txt); await this._loadProject(proj); continue;
+        }
+        const lower = (f.name||'').toLowerCase();
+        const allowExt = ['.png','.jpg','.jpeg','.bmp','.gif','.webp','.tif','.tiff'];
+        const isAllowedByExt = allowExt.some(x=>lower.endsWith(x));
+        if(!(f.type && f.type.startsWith('image/')) && !isAllowedByExt){ this._debug('import:skip', {name:f.name, reason:'not image type or extension'}); continue }
+        const bmp = await fileToBitmap(f);
+        this._debug('import:decoded', {name:f.name, width:bmp.width, height:bmp.height, ctor:bmp.constructor?.name});
+        const page = this.state.addPage(f.name, bmp);
+ main
         this._debug('import:page-added', {index:this.state.current, total:this.state.pages.length});
         // Generate thumb
         page.thumbDataUrl = await this._bitmapToThumb(bmp);
@@ -1502,7 +2134,7 @@ class AppUI {
     this._queueAutosave();
     if(ok>0){ this._toast(`Imported ${ok} file${ok>1?'s':''}`, 'ok') }
     this._updateUndoRedoButtons && this._updateUndoRedoButtons();
-  }
+   DevShgOpenCv
   async _importPDF(file){
     if(!(window.pdfjsLib && pdfjsLib.getDocument)){
       this._toast('PDF import requires Internet (PDF.js)', 'error');
@@ -1631,6 +2263,7 @@ class AppUI {
     });
     renderPage();
   }
+ main
   async _bitmapToThumb(bitmap){
     const max=160; const r = Math.max(bitmap.width, bitmap.height); const s = max/r; const w=(bitmap.width*s)|0, h=(bitmap.height*s)|0;
     const c=document.createElement('canvas'); c.width=w; c.height=h; const ctx=c.getContext('2d'); ctx.imageSmoothingEnabled=false; ctx.drawImage(bitmap,0,0,bitmap.width,bitmap.height,0,0,w,h); return c.toDataURL('image/png');
@@ -1980,6 +2613,7 @@ class AppUI {
     if(e.key==='3'){ this.tool='arrow'; this._syncToolButtons(); return }
     if(e.key==='4'){ this.tool='text'; this._syncToolButtons(); return }
     if(e.key==='5'){ this.tool='measure'; this._syncToolButtons(); return }
+ DevShgOpenCv
     if(e.key==='6'){ this.tool='highlight'; this._syncToolButtons(); return }
     // Symbol rotation + delete when a symbol is selected
     if(this._selectedAnnId){
@@ -2048,6 +2682,10 @@ class AppUI {
     this._pushUndo('add-text');
     p.annotations.push(ann); this._selectedAnnId = ann.id; this.viewer.selectedId = ann.id; this.viewer.requestRender(); this._updateUndoRedoButtons && this._updateUndoRedoButtons(); this._syncTextControls && this._syncTextControls();
   }
+
+    if(e.key==='6'){ this.tool='highlight'; this._syncToolButtons(); return }
+  }
+ main
   async _exportProject(){
     const proj = { version:2, pages:[] };
     for(const p of this.state.pages){
@@ -2150,6 +2788,7 @@ AppUI.prototype._snapshotState = function(){
     pages: this.state.pages.map(p=>this._clonePageForHistory(p))
   };
 };
+ DevShgOpenCv
 
 AppUI.prototype._restoreState = function(snap){
   if(!snap) return;
@@ -2191,6 +2830,49 @@ AppUI.prototype._pushUndoIfNeeded = function(label){
   if(!this._historyBatchDepth){ this._pushUndo(label); }
 };
 
+
+
+AppUI.prototype._restoreState = function(snap){
+  if(!snap) return;
+  this.state.pages = snap.pages.map(p=>({
+    ...p,
+    layers: (p.layers||[]).map(l=>({ ...l })),
+    annotations: (p.annotations||[]).map(a=>({ ...a, points: (a.points||[]).map(pt=>({x:pt.x,y:pt.y})) }))
+  }));
+  this.state.current = Math.max(0, Math.min(this.state.pages.length-1, snap.current|0));
+  try{ this.state.emit('pages'); }catch(_){ }
+  try{ this.state.emit('current'); }catch(_){ }
+  this.viewer.requestRender(true);
+  this._queueAutosave && this._queueAutosave();
+};
+
+AppUI.prototype._pushUndo = function(label){
+  try{
+    const snap = this._snapshotState();
+    this._undoStack.push({ label, snap });
+    if(this._undoStack.length > this._historyLimit){ this._undoStack.shift(); }
+    this._redoStack = [];
+  }catch(e){ this._debug && this._debug('history:push:error', String(e&&e.message||e)); }
+};
+
+// History helpers: batching so multi-add highlight is one step
+AppUI.prototype._withHistory = async function(label, fn){
+  this._historyBatchDepth = (this._historyBatchDepth||0) + 1;
+  if(this._historyBatchDepth === 1){ this._historyDeferPush = true; this._historyDeferredLabel = label; }
+  try{
+    return await fn();
+  } finally {
+    this._historyBatchDepth -= 1;
+    if(this._historyBatchDepth <= 0){ this._historyBatchDepth = 0; this._historyDeferPush = false; this._historyDeferredLabel = ''; this._updateUndoRedoButtons && this._updateUndoRedoButtons(); }
+  }
+};
+
+AppUI.prototype._pushUndoIfNeeded = function(label){
+  if(this._historyBatchDepth && this._historyDeferPush){ this._pushUndo(this._historyDeferredLabel || label); this._historyDeferPush = false; return; }
+  if(!this._historyBatchDepth){ this._pushUndo(label); }
+};
+
+ main
 AppUI.prototype.undo = function(){
   if(!this._undoStack.length){ this._toast && this._toast('Nothing to undo'); return; }
   try{
@@ -2381,6 +3063,7 @@ AppUI.prototype._cvTracePath = async function(page, x, y){
   return new Promise((resolve)=>{
     const w=window.cvWorker; const onMsg=(ev)=>{ const d=ev.data||{}; if(d.type==='tracePath:result' && d.id===p.id){ w.removeEventListener('message', onMsg); resolve(d.path||null) } };
     this._pushUndoIfNeeded && this._pushUndoIfNeeded('cv:denoise');
+ DevShgOpenCv
     w.addEventListener('message', onMsg);
     w.postMessage({ type:'tracePath', id:p.id, click:{x,y} });
   });
@@ -2474,11 +3157,76 @@ AppUI.prototype._cvTraceComponent = async function(page, x, y){
 }
 
   AppUI.prototype._cvTextEnhance = function(reqId){
+
+    w.addEventListener('message', onMsg);
+    w.postMessage({ type:'tracePath', id:p.id, click:{x,y} });
+  });
+}
+
+AppUI.prototype._cvTraceComponent = async function(page, x, y){
+  const p=page||this.state.page; if(!p) return null; if(!(window.cvWorker && window.cvWorkerReady)) return null;
+  return new Promise((resolve)=>{
+    const w=window.cvWorker; const onMsg=(ev)=>{ const d=ev.data||{}; if(d.type==='traceComponent:result' && d.id===p.id){ w.removeEventListener('message', onMsg); resolve(d.paths||null) } };
+    this._pushUndoIfNeeded && this._pushUndoIfNeeded('cv:adaptive');
+    w.addEventListener('message', onMsg);
+    w.postMessage({ type:'traceComponent', id:p.id, click:{x,y} });
+  });
+}
+
+  AppUI.prototype._cvDeskew = function(reqId){
   const p=this.state.page; if(!p) return; const c=this._sourceCanvas(); if(!c) return;
   const ctx=c.getContext('2d', { willReadFrequently: true }); const img=ctx.getImageData(0,0,c.width,c.height);
   if(!(window.cvWorker && window.cvWorkerReady)){ this._toast('Load OpenCV first', 'error'); return }
   return new Promise((resolve)=>{
     const w=window.cvWorker; const onMsg=(ev)=>{
+      const d=ev.data||{}; if(d.type==='deskew:result' && (!reqId || d.reqId===reqId)){
+        w.removeEventListener('message', onMsg);
+        const out=d.image; const outCanvas=document.createElement('canvas'); outCanvas.width=out.width; outCanvas.height=out.height; outCanvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(out.data), out.width, out.height),0,0);
+        p.cvCanvas=outCanvas; const ret=this._applyEnhancements(p); if(ret&&typeof ret.then==='function'){ ret.then(()=>resolve()); } else { resolve(); }
+      } else if(d.type==='error'){
+        try{ this._debug('cv:error', {op:'deskew', message:d.error}); }catch(_){ }
+        try{ this._toast('OpenCV error: '+(d.error||'deskew'), 'error') }catch(_){ }
+        try{ w.removeEventListener('message', onMsg) }catch(_){ }
+        resolve();
+      }
+    };
+    this._pushUndoIfNeeded && this._pushUndoIfNeeded('cv:text');
+    w.addEventListener('message', onMsg);
+    w.postMessage({ type:'deskew', reqId, image:{ data:new Uint8ClampedArray(img.data), width:c.width, height:c.height } });
+  });
+}
+
+  AppUI.prototype._cvDenoise = function(reqId){
+  const p=this.state.page; if(!p) return; const c=this._sourceCanvas(); if(!c) return;
+  const ctx=c.getContext('2d', { willReadFrequently: true }); const img=ctx.getImageData(0,0,c.width,c.height);
+  if(!(window.cvWorker && window.cvWorkerReady)){ this._toast('Load OpenCV first', 'error'); return }
+  return new Promise((resolve)=>{
+    const w=window.cvWorker; const onMsg=(ev)=>{
+      const d=ev.data||{}; if(d.type==='denoise:result' && (!reqId || d.reqId===reqId)){
+        w.removeEventListener('message', onMsg);
+        const out=d.image; const outCanvas=document.createElement('canvas'); outCanvas.width=out.width; outCanvas.height=out.height; outCanvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(out.data), out.width, out.height),0,0);
+        p.cvCanvas=outCanvas; const ret=this._applyEnhancements(p); if(ret&&typeof ret.then==='function'){ ret.then(()=>resolve()); } else { resolve(); }
+      } else if(d.type==='error'){
+        try{ this._debug('cv:error', {op:'denoise', message:d.error}); }catch(_){ }
+        try{ this._toast('OpenCV error: '+(d.error||'denoise'), 'error') }catch(_){ }
+        try{ w.removeEventListener('message', onMsg) }catch(_){ }
+        resolve();
+      }
+    };
+    this._pushUndoIfNeeded && this._pushUndoIfNeeded('cv:bgnorm');
+    w.addEventListener('message', onMsg);
+    w.postMessage({ type:'denoise', reqId, image:{ data:new Uint8ClampedArray(img.data), width:c.width, height:c.height } });
+  });
+}
+
+  AppUI.prototype._cvAdaptive = function(reqId){
+main
+  const p=this.state.page; if(!p) return; const c=this._sourceCanvas(); if(!c) return;
+  const ctx=c.getContext('2d', { willReadFrequently: true }); const img=ctx.getImageData(0,0,c.width,c.height);
+  if(!(window.cvWorker && window.cvWorkerReady)){ this._toast('Load OpenCV first', 'error'); return }
+  return new Promise((resolve)=>{
+    const w=window.cvWorker; const onMsg=(ev)=>{
+DevShgOpenCv
       const d=ev.data||{}; if(d.type==='text:result' && (!reqId || d.reqId===reqId)){
         w.removeEventListener('message', onMsg);
         const out=d.image; const outCanvas=document.createElement('canvas'); outCanvas.width=out.width; outCanvas.height=out.height; {
@@ -2490,10 +3238,20 @@ AppUI.prototype._cvTraceComponent = async function(page, x, y){
       } else if(d.type==='error'){
         try{ this._debug('cv:error', {op:'text', message:d.error}); }catch(_){ }
         try{ this._toast('OpenCV error: '+(d.error||'text'), 'error') }catch(_){ }
+
+      const d=ev.data||{}; if(d.type==='adaptive:result' && (!reqId || d.reqId===reqId)){
+        w.removeEventListener('message', onMsg);
+        const out=d.image; const outCanvas=document.createElement('canvas'); outCanvas.width=out.width; outCanvas.height=out.height; outCanvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(out.data), out.width, out.height),0,0);
+        p.cvCanvas=outCanvas; const ret=this._applyEnhancements(p); if(ret&&typeof ret.then==='function'){ ret.then(()=>resolve()); } else { resolve(); }
+      } else if(d.type==='error'){
+        try{ this._debug('cv:error', {op:'adaptive', message:d.error}); }catch(_){ }
+        try{ this._toast('OpenCV error: '+(d.error||'adaptive'), 'error') }catch(_){ }
+ main
         try{ w.removeEventListener('message', onMsg) }catch(_){ }
         resolve();
       }
     };
+ DevShgOpenCv
     w.addEventListener('message', onMsg);
     const strength = parseInt(this.cvTextStrength?.value||'2')|0;
     const thin = parseInt(this.cvTextThin?.value||'0')|0;
@@ -2505,11 +3263,21 @@ AppUI.prototype._cvTraceComponent = async function(page, x, y){
 }
 
   AppUI.prototype._cvTextEnhance2 = function(reqId){
+
+    this._pushUndoIfNeeded && this._pushUndoIfNeeded('cv:despeckle');
+    w.addEventListener('message', onMsg);
+    w.postMessage({ type:'adaptive', reqId, image:{ data:new Uint8ClampedArray(img.data), width:c.width, height:c.height } });
+  });
+}
+
+  AppUI.prototype._cvTextEnhance = function(reqId){
+ main
   const p=this.state.page; if(!p) return; const c=this._sourceCanvas(); if(!c) return;
   const ctx=c.getContext('2d', { willReadFrequently: true }); const img=ctx.getImageData(0,0,c.width,c.height);
   if(!(window.cvWorker && window.cvWorkerReady)){ this._toast('Load OpenCV first', 'error'); return }
   return new Promise((resolve)=>{
     const w=window.cvWorker; const onMsg=(ev)=>{
+ DevShgOpenCv
       const d=ev.data||{}; if(d.type==='text2:result' && (!reqId || d.reqId===reqId)){
         w.removeEventListener('message', onMsg);
         const out=d.image; const outCanvas=document.createElement('canvas'); outCanvas.width=out.width; outCanvas.height=out.height; {
@@ -2521,6 +3289,15 @@ AppUI.prototype._cvTraceComponent = async function(page, x, y){
       } else if(d.type==='error'){
         try{ this._debug('cv:error', {op:'text2', message:d.error}); }catch(_){ }
         try{ this._toast('OpenCV error: '+(d.error||'text2'), 'error') }catch(_){ }
+
+      const d=ev.data||{}; if(d.type==='text:result' && (!reqId || d.reqId===reqId)){
+        w.removeEventListener('message', onMsg);
+        const out=d.image; const outCanvas=document.createElement('canvas'); outCanvas.width=out.width; outCanvas.height=out.height; outCanvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(out.data), out.width, out.height),0,0);
+        p.cvCanvas=outCanvas; const ret=this._applyEnhancements(p); if(ret&&typeof ret.then==='function'){ ret.then(()=>resolve()); } else { resolve(); }
+      } else if(d.type==='error'){
+        try{ this._debug('cv:error', {op:'text', message:d.error}); }catch(_){ }
+        try{ this._toast('OpenCV error: '+(d.error||'text'), 'error') }catch(_){ }
+ main
         try{ w.removeEventListener('message', onMsg) }catch(_){ }
         resolve();
       }
@@ -2531,9 +3308,13 @@ AppUI.prototype._cvTraceComponent = async function(page, x, y){
     const thicken = parseInt(this.cvTextThicken?.value||'1')|0;
     const upscale = this.cvTextUpscale ? !!this.cvTextUpscale.checked : true;
     const bgEq = this.cvBgEq ? !!this.cvBgEq.checked : false;
+DevShgOpenCv
     // Reuse "Max speck" slider to suppress tiny dots after Sauvola
     const maxSpeck = parseInt(this.cvSpeckSize?.value||'0')|0;
     w.postMessage({ type:'textEnhance2', reqId, options:{ strength, thin, thicken, upscale, bgEq, maxSpeck }, image:{ data:new Uint8ClampedArray(img.data), width:c.width, height:c.height } });
+
+    w.postMessage({ type:'textEnhance', reqId, options:{ strength, thin, thicken, upscale, bgEq }, image:{ data:new Uint8ClampedArray(img.data), width:c.width, height:c.height } });
+ main
   });
 }
 
@@ -2545,11 +3326,15 @@ AppUI.prototype._cvTraceComponent = async function(page, x, y){
     const w=window.cvWorker; const onMsg=(ev)=>{
       const d=ev.data||{}; if(d.type==='bgnorm:result' && (!reqId || d.reqId===reqId)){
         w.removeEventListener('message', onMsg);
+ DevShgOpenCv
         const out=d.image; const outCanvas=document.createElement('canvas'); outCanvas.width=out.width; outCanvas.height=out.height; {
           const ctx2=outCanvas.getContext('2d'); const data=new Uint8ClampedArray(out.data); for(let i=3;i<data.length;i+=4){ data[i]=255; }
           ctx2.fillStyle = '#ffffff'; ctx2.fillRect(0,0,out.width,out.height);
           ctx2.putImageData(new ImageData(data, out.width, out.height),0,0);
         }
+
+        const out=d.image; const outCanvas=document.createElement('canvas'); outCanvas.width=out.width; outCanvas.height=out.height; outCanvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(out.data), out.width, out.height),0,0);
+ main
         p.cvCanvas=outCanvas; const ret=this._applyEnhancements(p); if(ret&&typeof ret.then==='function'){ ret.then(()=>resolve()); } else { resolve(); }
       } else if(d.type==='error'){
         try{ this._debug('cv:error', {op:'bgnorm', message:d.error}); }catch(_){ }
@@ -2571,10 +3356,14 @@ AppUI.prototype._cvTraceComponent = async function(page, x, y){
     const w=window.cvWorker; const onMsg=(ev)=>{
       const d=ev.data||{}; if(d.type==='despeckle:result' && (!reqId || d.reqId===reqId)){
         w.removeEventListener('message', onMsg);
+ DevShgOpenCv
         const out=d.image; const outCanvas=document.createElement('canvas'); outCanvas.width=out.width; outCanvas.height=out.height; {
           const ctx2=outCanvas.getContext('2d'); const data=new Uint8ClampedArray(out.data); for(let i=3;i<data.length;i+=4){ data[i]=255; }
           ctx2.putImageData(new ImageData(data, out.width, out.height),0,0);
         }
+
+        const out=d.image; const outCanvas=document.createElement('canvas'); outCanvas.width=out.width; outCanvas.height=out.height; outCanvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(out.data), out.width, out.height),0,0);
+ main
         p.cvCanvas=outCanvas; const ret=this._applyEnhancements(p); if(ret&&typeof ret.then==='function'){ ret.then(()=>resolve()); } else { resolve(); }
       } else if(d.type==='error'){
         try{ this._debug('cv:error', {op:'despeckle', message:d.error}); }catch(_){ }

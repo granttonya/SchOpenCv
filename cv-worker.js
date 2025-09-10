@@ -13,6 +13,7 @@ const graphs = new Map();
 function loadCV() {
   return new Promise((resolve, reject) => {
     if (ready) return resolve();
+ DevShgOpenCv
     const sources = [
       // Prefer CORS-friendly CDN first
       'https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.9.0/dist/opencv.js',
@@ -42,6 +43,24 @@ function loadCV() {
       }
       reject(lastErr || new Error('Failed to load OpenCV.js from all sources'));
     })();
+
+    // Make sure wasm path resolves when loading from CDN
+    self.Module = {
+      locateFile: (file) => `https://docs.opencv.org/4.x/${file}`
+    };
+    try {
+      importScripts('https://docs.opencv.org/4.x/opencv.js');
+    } catch (e) {
+      reject(e);
+      return;
+    }
+    if (self.cv && typeof self.cv['onRuntimeInitialized'] !== 'undefined') {
+      self.cv['onRuntimeInitialized'] = () => { ready = true; resolve(); };
+    } else {
+      // Some builds initialize immediately
+      ready = true; resolve();
+    }
+ main
   });
 }
 
@@ -96,6 +115,7 @@ function matToImagePayload(mat) {
     rgba = mat.clone();
   } else {
     rgba = new cv.Mat();
+ DevShgOpenCv
     try{
       const ch = mat.channels ? mat.channels() : (mat.type() === cv.CV_8UC1 ? 1 : 4);
       if(ch === 1){ cv.cvtColor(mat, rgba, cv.COLOR_GRAY2RGBA, 0); }
@@ -109,6 +129,11 @@ function matToImagePayload(mat) {
   const buf = new Uint8ClampedArray(rgba.data);
   // Ensure opaque alpha to avoid compositing artifacts (black tiles)
   for(let i=3;i<buf.length;i+=4){ buf[i]=255; }
+
+    cv.cvtColor(mat, rgba, cv.COLOR_RGBA2RGBA, 0);
+  }
+  const buf = new Uint8ClampedArray(rgba.data);
+ main
   const payload = { data: buf.buffer, width: w, height: h };
   rgba.delete();
   return payload;
@@ -185,7 +210,11 @@ function opBgNormalize(srcRGBA, report){
     const bg = new cv.Mat(); cv.morphologyEx(gray, bg, cv.MORPH_OPEN, kernel);
     if(report) report(55);
     // Normalize by division: gray / (bg + eps) -> stretch to 0..255
+ DevShgOpenCv
     const fGray = new cv.Mat(); let fBg = new cv.Mat(); gray.convertTo(fGray, cv.CV_32F); bg.convertTo(fBg, cv.CV_32F);
+
+    const fGray = new cv.Mat(); const fBg = new cv.Mat(); gray.convertTo(fGray, cv.CV_32F); bg.convertTo(fBg, cv.CV_32F);
+ main
     const eps = 1.0; { const epsMat=new cv.Mat(fBg.rows,fBg.cols,fBg.type()); epsMat.setTo(new cv.Scalar(eps)); const sum=new cv.Mat(); cv.add(fBg, epsMat, sum); fBg.delete(); fBg=sum; epsMat.delete(); }
     const norm = new cv.Mat(); cv.divide(fGray, fBg, norm, 1.0);
     const norm2 = new cv.Mat(); cv.normalize(norm, norm2, 0, 255, cv.NORM_MINMAX);
@@ -230,9 +259,12 @@ function opDespeckle(srcRGBA, report, options){
     const maxSize = Math.max(1, Math.min(5000, (options && options.maxSize)|0 || 40));
     if(report) report(10);
     const gray = new cv.Mat(); cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+ DevShgOpenCv
     // Build a conservative text mask to protect real letters from removal
     let tmask = null; try{ tmask = buildTextMask(gray, { strength: 2, upscale:false }); }catch(_){ }
     let tmaskDil = null; if(tmask){ const k=cv.getStructuringElement(cv.MORPH_RECT,new cv.Size(3,3)); tmaskDil=new cv.Mat(); cv.dilate(tmask, tmaskDil, k); k.delete(); }
+
+ main
     // Binarize via Otsu (foreground dark -> invert to white)
     const binInv = new cv.Mat(); cv.threshold(gray, binInv, 0, 255, cv.THRESH_BINARY_INV | cv.THRESH_OTSU);
     if(report) report(40);
@@ -260,6 +292,7 @@ function opDespeckle(srcRGBA, report, options){
     if(report) report(75);
     // Pixels to remove: components that were <maxSize
     const removed = new cv.Mat(); cv.subtract(binInv, maskKeep, removed);
+ DevShgOpenCv
     // If we have a text mask, keep anything that overlaps text to avoid erasing strokes
     let removeSafe = removed;
     if(tmaskDil){
@@ -276,6 +309,13 @@ function opDespeckle(srcRGBA, report, options){
     removed.delete(); white.delete();
     try{ if(tmaskDil) tmaskDil.delete(); }catch(_){ }
     try{ if(tmask) tmask.delete(); }catch(_){ }
+
+    // Replace removed pixels in src with white
+    const white = new cv.Mat(src.rows, src.cols, src.type(), new cv.Scalar(255,255,255,255));
+    white.copyTo(src, removed);
+    if(report) report(100);
+    gray.delete(); binInv.delete(); labels.delete(); stats.delete(); cents.delete(); maskKeep.delete(); removed.delete(); white.delete();
+ main
     return matToImagePayload(src);
   } finally { src.delete(); }
 }
@@ -384,12 +424,15 @@ self.onmessage = async (e) => {
         self.postMessage({ type: 'text:result', reqId, image: out }, [out.data]);
         break;
       }
+ DevShgOpenCv
       case 'textEnhance2': {
         const { reqId, options } = msg;
         const out = opTextEnhanceSauvola(msg.image, (v)=> self.postMessage({ type:'progress', op:'text2', reqId, value: v }), options||{});
         self.postMessage({ type: 'text2:result', reqId, image: out }, [out.data]);
         break;
       }
+
+main
       case 'exportSVG': {
         const { id, options } = msg;
         let g = graphs.get(id);
@@ -628,6 +671,7 @@ function traceComponentFromClick(graph, x, y){
     const a=e.a|0, b=e.b|0; const as=nodeToEdges.get(a)||[], bs=nodeToEdges.get(b)||[];
     for(const nei of as){ if(!visited[nei]){ visited[nei]=1; stack.push(nei); } }
     for(const nei of bs){ if(!visited[nei]){ visited[nei]=1; stack.push(nei); } }
+DevShgOpenCv
   }
   // Return as array of polylines (each edge's points). Caller may merge or simplify.
   const paths = comp.map(ei=>{
@@ -821,6 +865,96 @@ function opTextEnhanceSauvola(srcRGBA, report, options){
       const downM = new cv.Mat(); cv.resize(tmask, downM, new cv.Size(src.cols, src.rows), 0,0, cv.INTER_NEAREST);
       bin.delete(); binUse = down; tmask.delete(); maskUse = downM;
     }
+
+  }
+  // Return as array of polylines (each edge's points). Caller may merge or simplify.
+  const paths = comp.map(ei=>{
+    const pts = edges[ei].points||[]; return pts;
+  });
+  return paths;
+}
+
+// --- Text mask and enhancement ---
+function buildTextMask(gray, options){
+  // Detect likely text as dark, relatively small blobs on light background.
+  const strength = Math.max(0, Math.min(3, (options && options.strength)|0 || 2));
+  const kSize = Math.max(7, Math.min(25, 11 + strength*4));
+  const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(kSize, kSize));
+  const bh = new cv.Mat(); cv.morphologyEx(gray, bh, cv.MORPH_BLACKHAT, kernel);
+  const mask = new cv.Mat(); cv.threshold(bh, mask, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
+  const open = new cv.Mat(); const k3 = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3,3)); cv.morphologyEx(mask, open, cv.MORPH_OPEN, k3);
+  // Filter connected components to keep text-like sizes
+  const labels = new cv.Mat(); const stats = new cv.Mat(); const cents = new cv.Mat();
+  const num = cv.connectedComponentsWithStats(open, labels, stats, cents, 8, cv.CV_32S);
+  const out = cv.Mat.zeros(mask.rows, mask.cols, cv.CV_8UC1);
+  const areaScale = (options && options.upscale)?4:1;
+  const minA = 8*areaScale, maxA = Math.max(2000*areaScale, ((gray.rows*gray.cols)|0)/(200/areaScale));
+  for(let i=1;i<num;i++){
+    const a = stats.intPtr(i, cv.CC_STAT_AREA)[0];
+    const w = stats.intPtr(i, cv.CC_STAT_WIDTH)[0];
+    const h = stats.intPtr(i, cv.CC_STAT_HEIGHT)[0];
+    if(a>=minA && a<=maxA && w>=2 && h>=2){
+      const rect = new cv.Rect(stats.intPtr(i, cv.CC_STAT_LEFT)[0], stats.intPtr(i, cv.CC_STAT_TOP)[0], w, h);
+      const roi = out.roi(rect); roi.setTo(new cv.Scalar(255)); roi.delete();
+    }
+  }
+  kernel.delete(); bh.delete(); mask.delete(); open.delete(); labels.delete(); stats.delete(); cents.delete();
+  return out;
+}
+
+function opTextEnhance(srcRGBA, report, options){
+  const src = toMatRGBA(srcRGBA);
+  try{
+    const strength = Math.max(0, Math.min(3, (options && options.strength)|0 || 2));
+    const thicken = Math.max(0, Math.min(2, (options && options.thicken)|0 || 1));
+    const thin = Math.max(0, Math.min(2, (options && options.thin)|0 || 0));
+    const bgEq = !!(options && options.bgEq);
+    const upscale = !!(options && options.upscale);
+    if(report) report(10);
+    let gray = new cv.Mat(); cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+    if(bgEq){
+      // Background normalization pre-pass
+      const kSize = 61; const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(kSize, kSize));
+      const bg = new cv.Mat(); cv.morphologyEx(gray, bg, cv.MORPH_OPEN, kernel);
+      const fGray = new cv.Mat(); const fBg = new cv.Mat(); gray.convertTo(fGray, cv.CV_32F); bg.convertTo(fBg, cv.CV_32F);
+      const eps = 1.0; { const epsMat=new cv.Mat(fBg.rows,fBg.cols,fBg.type()); epsMat.setTo(new cv.Scalar(eps)); const sum=new cv.Mat(); cv.add(fBg, epsMat, sum); fBg.delete(); fBg=sum; epsMat.delete(); }
+      const norm = new cv.Mat(); cv.divide(fGray, fBg, norm, 1.0);
+      const norm2 = new cv.Mat(); cv.normalize(norm, norm2, 0, 255, cv.NORM_MINMAX);
+      const out8 = new cv.Mat(); norm2.convertTo(out8, cv.CV_8U);
+      gray.delete(); gray = out8;
+      bg.delete(); kernel.delete(); fGray.delete(); fBg.delete(); norm.delete(); norm2.delete();
+    }
+    // Optional upscale to help tiny text
+    let scale = 1;
+    if(upscale){ const hi = new cv.Mat(); cv.resize(gray, hi, new cv.Size(gray.cols*2, gray.rows*2), 0, 0, cv.INTER_CUBIC); gray.delete(); gray = hi; scale=2; }
+    if(report) report(25);
+    // CLAHE for local contrast
+    let eq = null; try{
+      const tiles = 8 + strength*4; const clip = 2.0 + strength*1.0;
+      const clahe = (cv.createCLAHE? cv.createCLAHE(clip, new cv.Size(tiles,tiles)) : new cv.CLAHE(clip, new cv.Size(tiles,tiles)));
+      eq = new cv.Mat(); clahe.apply(gray, eq); try{ clahe.delete && clahe.delete(); }catch(_){ }
+    }catch(_){ eq = gray.clone(); }
+    if(report) report(45);
+    // Stronger local binarization tuned for text
+    const block = 9 + strength*4; const bsize = (block%2)?block:block+1; const C = 2 + strength*2;
+    let bin = new cv.Mat(); cv.adaptiveThreshold(eq, bin, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, bsize, C);
+    // Optional thinning/opening to reduce bleed
+    if(thin>0){ const k = 1 + thin*2; const kx = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(k,k)); const tmp = new cv.Mat(); cv.morphologyEx(bin, tmp, cv.MORPH_OPEN, kx); bin.delete(); bin = tmp; kx.delete(); }
+    // Optional thickening/closing to reconnect broken strokes
+    if(thicken>0){ const k = 1 + thicken*2; const kx = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(k,k)); const tmp = new cv.Mat(); cv.morphologyEx(bin, tmp, cv.MORPH_CLOSE, kx); bin.delete(); bin = tmp; kx.delete(); }
+    // Build text mask on (possibly upscaled) contrast image
+    const tmask = buildTextMask(eq, { strength, upscale });
+    if(report) report(70);
+    // Build stroke mask (text pixels) and restrict by text-region mask; keep background untouched
+    // Ensure sizes match original src
+    let binUse = bin;
+    let maskUse = tmask;
+    if(scale!==1){
+      const downBin = new cv.Mat(); cv.resize(bin, downBin, new cv.Size(src.cols, src.rows), 0,0, cv.INTER_NEAREST);
+      const downM = new cv.Mat(); cv.resize(tmask, downM, new cv.Size(src.cols, src.rows), 0,0, cv.INTER_NEAREST);
+      bin.delete(); binUse = downBin; tmask.delete(); maskUse = downM;
+    }
+ main
     const strokeMask = new cv.Mat(); // 255 where text strokes are
     cv.bitwise_not(binUse, strokeMask); // bin had background=255, text=0
     const paintMask = new cv.Mat();
@@ -828,9 +962,15 @@ function opTextEnhanceSauvola(srcRGBA, report, options){
     // Paint strokes black on RGBA source, leave background as-is
     src.setTo(new cv.Scalar(0,0,0,255), paintMask);
     if(report) report(100);
+ DevShgOpenCv
     // Cleanup
     f32.delete(); mean.delete(); sq.delete(); mean2.delete(); mm.delete(); variance.delete(); stddev.delete(); R.delete(); sOverR.delete(); one.delete(); sTerm.delete(); kMat.delete(); kTerm.delete(); base.delete(); T.delete();
     try{ if(binUse!==bin) binUse.delete(); }catch(_){ }
+
+    gray.delete(); eq.delete();
+    try{ if(binUse!==bin) binUse.delete(); }catch(_){ }
+    try{ bin.delete(); }catch(_){ }
+ main
     try{ strokeMask.delete(); }catch(_){ }
     try{ paintMask.delete(); }catch(_){ }
     try{ maskUse.delete(); }catch(_){ }

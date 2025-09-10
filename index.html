@@ -23,7 +23,11 @@
         <button id="btn-save" title="Export Project (Ctrl+S)"><span class="i">💾</span> Save</button>
         <button id="btn-undo" title="Undo (Ctrl+Z)">↶ Undo</button>
         <button id="btn-redo" title="Redo (Ctrl+Y / Ctrl+Shift+Z)">↷ Redo</button>
+ DevShgOpenCv
         <input id="file-input" class="visually-hidden" type="file" accept="image/*,.png,.jpg,.jpeg,.bmp,.gif,.webp,.tif,.tiff,.pdf,application/pdf" multiple>
+
+        <input id="file-input" class="visually-hidden" type="file" accept="image/*,.png,.jpg,.jpeg,.bmp,.gif,.webp,.tif,.tiff" multiple>
+ main
       </div>
       <div class="tool-group">
         <button id="btn-zoom-out" title="Zoom Out (-)">−</button>
@@ -59,7 +63,10 @@
       <div class="tabs" id="right-tabs">
         <button data-tab="lines" class="active">Lines</button>
         <button data-tab="text">Text</button>
+ DevShgOpenCv
         <button data-tab="symbols">Symbols</button>
+
+ main
         <button data-tab="layers">Layers</button>
       </div>
       <div class="tab-panel active" data-tab="lines" id="tab-lines">
@@ -109,6 +116,7 @@
         <div class="row key-val"><div class="key">Color</div><div class="value"><input id="hl-color" type="color" value="#ffd166"></div></div>
         <div class="row key-val"><div class="key">Transparency</div><div class="val"><input id="hl-alpha" type="range" min="0" max="100" step="1" value="0"></div></div>
         
+ DevShgOpenCv
         <div class="row"><label><input id="hl-stop" type="checkbox" checked> Stop at junctions/symbols</label></div>
       </div>
       </div> <!-- end tab-lines -->
@@ -210,6 +218,31 @@
         </div>
       </div>
 
+
+        <div class="row"><label><input id="hl-stop" type="checkbox"> Stop at junctions/symbols</label></div>
+      </div>
+      </div> <!-- end tab-lines -->
+
+      <div class="tab-panel" data-tab="text" id="tab-text">
+        <div class="panel">
+          <h3>Text Enhance</h3>
+          <div class="row"><button id="cv-text" class="btn">Text Enhance</button></div>
+          <div class="row key-val"><div class="key">Text strength</div><div class="value"><input id="cv-text-strength" type="range" min="0" max="3" step="1" value="2"></div></div>
+          <div class="row key-val"><div class="key">Thin text</div><div class="value"><input id="cv-text-thin" type="range" min="0" max="2" step="1" value="0"></div></div>
+          <div class="row key-val"><div class="key">Thicken</div><div class="value"><input id="cv-text-thicken" type="range" min="0" max="2" step="1" value="1"></div></div>
+          <div class="row"><label><input id="cv-text-upscale" type="checkbox" checked> Upscale x2 for text</label></div>
+          <div class="row"><label><input id="cv-bg-eq" type="checkbox"> Equalize background in Text Enhance</label></div>
+          <div class="row"><button id="cv-bgnorm" class="btn">Background Equalize</button></div>
+          <div class="row"><button id="cv-despeckle" class="btn">Despeckle</button></div>
+          <div class="row key-val"><div class="key">Max speck</div><div class="value"><input id="cv-speck-size" type="range" min="5" max="300" step="5" value="40"></div></div>
+          <div class="row"><button id="cv-text-auto" class="btn">Auto Text Cleanup</button></div>
+          <div class="row"><button id="cv-ocr-replace" class="btn">OCR Replace Text</button></div>
+          <div class="row"><label><input id="cv-ocr-erase" type="checkbox" checked> Erase original text</label></div>
+          <div class="row key-val"><div class="key">Min conf</div><div class="value"><input id="cv-ocr-conf" type="range" min="40" max="95" step="5" value="65"></div></div>
+        </div>
+      </div>
+
+ main
       <div class="tab-panel" data-tab="layers" id="tab-layers">
         <div class="panel">
           <h3>Layers</h3>
@@ -223,9 +256,15 @@
             <div class="row key-val"><div class="key">Active</div><div class="value"><select id="layer-active"></select></div></div>
           </div>
         </div>
+ DevShgOpenCv
         <div class="panel hidden" id="props">
           <h3>Properties</h3>
           <div id="props-panel" class="props-panel muted">Moved: Use Symbols → Text Properties.</div>
+
+        <div class="panel">
+          <h3>Properties</h3>
+          <div class="muted">Select annotations to edit properties (coming soon).</div>
+ main
         </div>
       </div>
     </aside>
@@ -268,12 +307,16 @@
     <textarea id="debug-memo" spellcheck="false" wrap="off" placeholder="Debug output will appear here..."></textarea>
   </div>
 
+ DevShgOpenCv
   <!-- PDF.js for PDF import -->
   <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js" crossorigin="anonymous"></script>
   <script>
     try{ if(window['pdfjsLib']){ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js'; } }catch(_){ }
   </script>
   <script defer src="app.js?v=11" onerror="(function(){try{var t=document.getElementById('toast'); if(t){t.className='toast show error'; t.textContent='Failed to load app.js';} var d=document.getElementById('debug-panel'); d && d.classList.remove('hidden');}catch(e){}})()"></script>
+
+  <script defer src="app.js?v=3" onerror="(function(){try{var t=document.getElementById('toast'); if(t){t.className='toast show error'; t.textContent='Failed to load app.js';} var d=document.getElementById('debug-panel'); d && d.classList.remove('hidden');}catch(e){}})()"></script>
+ main
   <script>
     if('serviceWorker' in navigator && !location.search.includes('nosw')){
       window.addEventListener('load', ()=>{

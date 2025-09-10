@@ -1,11 +1,21 @@
+ DevShgOpenCv
 const CACHE_NAME = 'schematic-studio-v8';
+
+const CACHE_NAME = 'schematic-studio-v5';
+ main
 const ASSETS = [
   './',
   './index.html',
   './styles.css',
   './app.js',
   './app.js?v=3',
+ DevShgOpenCv
   './cv-worker.js'
+
+  './cv-worker.js',
+  'https://unpkg.com/utif@3.1.0/UTIF.min.js',
+  'https://docs.opencv.org/4.x/opencv.js'
+ main
 ];
 
 self.addEventListener('install', (e)=>{
@@ -20,6 +30,7 @@ self.addEventListener('fetch', (e)=>{
   // Network-first for JSON project files; cache-first for app shell
   if(req.method!=='GET'){ return }
   const url = new URL(req.url);
+ DevShgOpenCv
   const isAsset = (
     ASSETS.includes(req.url) ||
     ASSETS.includes(url.pathname) ||
@@ -32,5 +43,13 @@ self.addEventListener('fetch', (e)=>{
     return;
   }
   // Fallback: network-first with offline fallback from cache
+
+  if(url.origin===location.origin){
+    if(ASSETS.includes(url.pathname) || url.pathname==='/'){
+      e.respondWith(caches.match(req).then(r=>r||fetch(req)));
+      return;
+    }
+  }
+main
   e.respondWith(fetch(req).catch(()=>caches.match(req)));
 });
