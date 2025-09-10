@@ -1,13 +1,11 @@
-const CACHE_NAME = 'schematic-studio-v5';
+const CACHE_NAME = 'schematic-studio-v8';
 const ASSETS = [
   './',
   './index.html',
   './styles.css',
   './app.js',
   './app.js?v=3',
-  './cv-worker.js',
-  'https://unpkg.com/utif@3.1.0/UTIF.min.js',
-  'https://docs.opencv.org/4.x/opencv.js'
+  './cv-worker.js'
 ];
 
 self.addEventListener('install', (e)=>{
@@ -22,11 +20,17 @@ self.addEventListener('fetch', (e)=>{
   // Network-first for JSON project files; cache-first for app shell
   if(req.method!=='GET'){ return }
   const url = new URL(req.url);
-  if(url.origin===location.origin){
-    if(ASSETS.includes(url.pathname) || url.pathname==='/'){
-      e.respondWith(caches.match(req).then(r=>r||fetch(req)));
-      return;
-    }
+  const isAsset = (
+    ASSETS.includes(req.url) ||
+    ASSETS.includes(url.pathname) ||
+    ASSETS.includes('.' + (url.pathname.startsWith('/')?url.pathname:'/' + url.pathname)) ||
+    (url.origin===location.origin && (url.pathname==='/' || ASSETS.includes('./index.html')))
+  );
+  if(isAsset){
+    // Cache-first for app shell and pre-cached external libs
+    e.respondWith(caches.match(req).then(r=>r||fetch(req)));
+    return;
   }
+  // Fallback: network-first with offline fallback from cache
   e.respondWith(fetch(req).catch(()=>caches.match(req)));
 });

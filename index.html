@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Schematic Studio</title>
   <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://docs.opencv.org" crossorigin>
+  <link rel="dns-prefetch" href="https://docs.opencv.org">
+  <link rel="preconnect" href="https://unpkg.com" crossorigin>
+  <link rel="dns-prefetch" href="https://unpkg.com">
   <meta name="color-scheme" content="dark">
   <style>
     /* Minimal icon glyphs */
@@ -17,7 +21,9 @@
       <div class="tool-group">
         <label id="btn-open" class="btn" for="file-input" title="Open (Ctrl+O)"><span class="i">📂</span> Open</label>
         <button id="btn-save" title="Export Project (Ctrl+S)"><span class="i">💾</span> Save</button>
-        <input id="file-input" class="visually-hidden" type="file" accept="image/*,.png,.jpg,.jpeg,.bmp,.gif,.webp,.tif,.tiff" multiple>
+        <button id="btn-undo" title="Undo (Ctrl+Z)">↶ Undo</button>
+        <button id="btn-redo" title="Redo (Ctrl+Y / Ctrl+Shift+Z)">↷ Redo</button>
+        <input id="file-input" class="visually-hidden" type="file" accept="image/*,.png,.jpg,.jpeg,.bmp,.gif,.webp,.tif,.tiff,.pdf,application/pdf" multiple>
       </div>
       <div class="tool-group">
         <button id="btn-zoom-out" title="Zoom Out (-)">−</button>
@@ -50,6 +56,13 @@
     </main>
 
     <aside class="right">
+      <div class="tabs" id="right-tabs">
+        <button data-tab="lines" class="active">Lines</button>
+        <button data-tab="text">Text</button>
+        <button data-tab="symbols">Symbols</button>
+        <button data-tab="layers">Layers</button>
+      </div>
+      <div class="tab-panel active" data-tab="lines" id="tab-lines">
       <div class="panel">
         <h3>Enhance</h3>
         <div class="row"><label class="key">Brightness</label><input id="enh-bright" type="range" min="-100" max="100" value="0"></div>
@@ -70,42 +83,165 @@
         <div class="row"><button id="cv-load" class="btn">Load OpenCV</button></div>
         <div class="row"><button id="cv-deskew" class="btn">Auto Deskew</button></div>
         <div class="row"><button id="cv-denoise" class="btn">Denoise</button></div>
-        <div class="row"><button id="cv-adapt" class="btn">Adaptive Threshold</button></div>
-        <div class="row"><button id="cv-reset" class="btn warn">Reset CV</button></div>
-        <div class="muted">First time uses network to load OpenCV. Then cached for offline.</div>
+         <div class="row"><button id="cv-adapt" class="btn">Adaptive Threshold</button></div>
+         <!-- Text-related controls moved to Text tab below -->
+         <div class="row"><button id="cv-autoclean" class="btn">Auto Clean</button></div>
+         <div class="row"><button id="cv-auto" class="btn">Auto Clean + Redraw</button></div>
+<div class="row"><button id="cv-export-svg" class="btn">Export SVG</button></div>
+<div class="row"><button id="btn-export-png" class="btn">Export PNG</button></div>
+<div class="row"><button id="btn-export-zip" class="btn">Export ZIP</button></div>
+<div class="row key-val"><div class="key">PNG export</div><div class="value"><label><input id="export-merge" type="checkbox" checked> Include overlay</label></div></div>
+         <div class="row"><label><input id="cv-ignore-text" type="checkbox" checked> Exclude text from vectorization</label></div>
+         <div class="row key-val"><div class="key">Preview</div><div class="value"><label><input id="cv-preview" type="checkbox"> Vector overlay</label></div></div>
+         <div class="row key-val"><div class="key">Simplify</div><div class="value"><input id="cv-simplify" type="range" min="0" max="2" step="0.1" value="1"></div></div>
+         <div class="row key-val"><div class="key">Snap</div><div class="value"><label><input id="cv-snap" type="checkbox" checked> Snap H/V</label></div></div>
+         <div class="row key-val"><div class="key">Stroke</div><div class="value"><input id="cv-stroke" type="range" min="0.5" max="6" step="0.5" value="2"></div></div>
+         <div class="row key-val"><div class="key">Color</div><div class="value"><input id="cv-color" type="color" value="#00aaff"></div></div>
+<div class="row key-val"><div class="key">Bridge gaps</div><div class="value"><input id="cv-bridge" type="range" min="0" max="5" step="1" value="1"></div></div>
+         <div class="row"><button id="cv-reset" class="btn warn">Reset CV</button></div>
+         <div class="row"><button id="cv-reload" class="btn">Reset cache &amp; reload</button></div>
+         <div class="muted">First time uses network to load OpenCV. Then cached for offline.</div>
       </div>
 
       <div class="panel">
         <h3>Highlight</h3>
         <div class="row key-val"><div class="key">Thickness</div><div class="value"><input id="hl-width" type="range" min="1" max="40" step="1" value="6"></div></div>
+        <div class="row key-val"><div class="key">Color</div><div class="value"><input id="hl-color" type="color" value="#ffd166"></div></div>
         <div class="row key-val"><div class="key">Transparency</div><div class="val"><input id="hl-alpha" type="range" min="0" max="100" step="1" value="0"></div></div>
-    
-        <div class="row"><label><input id="hl-stop" type="checkbox"> Stop at junctions/symbols</label></div>
+        
+        <div class="row"><label><input id="hl-stop" type="checkbox" checked> Stop at junctions/symbols</label></div>
       </div>
-      <div class="panel">
-        <h3>Layers</h3>
-        <div class="layers">
-          <div id="layers-list"></div>
-          <div class="layer-actions">
-            <button id="layer-add" class="btn">+ Add</button>
-            <button id="layer-rename" class="btn">Rename</button>
-            <button id="layer-delete" class="btn warn">Delete</button>
+      </div> <!-- end tab-lines -->
+
+      <div class="tab-panel" data-tab="symbols" id="tab-symbols">
+        <div class="panel">
+          <h3>Symbol Palette</h3>
+          <div class="row key-val"><div class="key">Color</div><div class="value"><input id="sym-color" type="color" value="#000000" title="Symbol color"></div></div>
+          <div class="symbols" aria-label="Text Object">
+            <button class="sym item" data-kind="text" draggable="true" title="Text">
+              <svg class="sym-icon" viewBox="0 0 80 40"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10h40"/><path d="M40 10v20"/></g></svg>
+              <div class="sym-label">Text</div>
+            </button>
           </div>
-          <div class="row key-val"><div class="key">Active</div><div class="value"><select id="layer-active"></select></div></div>
+          <div class="symbols" id="symbols-palette" aria-label="Symbols">
+            <button class="sym item" data-kind="resistor" draggable="true" title="Resistor">
+              <svg class="sym-icon" viewBox="0 0 80 40"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20h20m36 0h20M22 20l6-10 6 20 6-20 6 20 6-10"/></g></svg>
+              <div class="sym-label">Resistor</div>
+            </button>
+            <button class="sym item" data-kind="capacitor" draggable="true" title="Capacitor">
+              <svg class="sym-icon" viewBox="0 0 80 40"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M2 20h28M50 20h28M30 8v24M50 8v24"/></g></svg>
+              <div class="sym-label">Capacitor</div>
+            </button>
+            <button class="sym item" data-kind="inductor" draggable="true" title="Inductor">
+              <svg class="sym-icon" viewBox="0 0 80 40"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M2 20h18m8 0c0-6 10-6 10 0s10 6 10 0 10-6 10 0 10 6 10 0m8 0h14"/></g></svg>
+              <div class="sym-label">Inductor</div>
+            </button>
+            <button class="sym item" data-kind="diode" draggable="true" title="Diode">
+              <svg class="sym-icon" viewBox="0 0 80 40"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20h20M58 20h20"/><path d="M22 8l28 12-28 12z"/><path d="M50 8v24"/></g></svg>
+              <div class="sym-label">Diode</div>
+            </button>
+            <button class="sym item" data-kind="led" draggable="true" title="LED">
+              <svg class="sym-icon" viewBox="0 0 80 40"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20h20M58 20h20"/><path d="M22 8l28 12-28 12z"/><path d="M50 8v24"/>
+              <path d="M58 10l6-6M54 14l6-6"/></g></svg>
+              <div class="sym-label">LED</div>
+            </button>
+            <button class="sym item" data-kind="npn" draggable="true" title="Transistor (NPN)">
+              <svg class="sym-icon" viewBox="0 0 80 40"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><circle cx="44" cy="20" r="12"/><path d="M2 20h18M64 20h14M22 20h10"/><path d="M48 24l10 6"/><path d="M50 23l2 7"/></g></svg>
+              <div class="sym-label">NPN</div>
+            </button>
+            <button class="sym item" data-kind="pnp" draggable="true" title="Transistor (PNP)">
+              <svg class="sym-icon" viewBox="0 0 80 40"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><circle cx="44" cy="20" r="12"/><path d="M2 20h18M64 20h14M22 20h10"/><path d="M58 30l-10-6"/><path d="M50 23l-2 7"/></g></svg>
+              <div class="sym-label">PNP</div>
+            </button>
+            <button class="sym item" data-kind="opamp" draggable="true" title="Op-Amp">
+              <svg class="sym-icon" viewBox="0 0 80 40"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8l30 12-30 12z"/><path d="M8 14h10M8 26h10"/><path d="M48 20h24"/></g></svg>
+              <div class="sym-label">Op‑Amp</div>
+            </button>
+            <button class="sym item" data-kind="switch" draggable="true" title="Switch (SPST)">
+              <svg class="sym-icon" viewBox="0 0 80 40"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M2 28h30"/><path d="M30 28l20-12"/><path d="M50 16h28"/></g></svg>
+              <div class="sym-label">Switch</div>
+            </button>
+            <button class="sym item" data-kind="battery" draggable="true" title="Battery">
+              <svg class="sym-icon" viewBox="0 0 80 40"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M8 20h18M54 20h18"/><path d="M26 10v20M46 6v28"/></g></svg>
+              <div class="sym-label">Battery</div>
+            </button>
+            <button class="sym item" data-kind="connector" draggable="true" title="Connector">
+              <svg class="sym-icon" viewBox="0 0 80 40"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><circle cx="40" cy="20" r="6"/><path d="M2 20h32M46 20h32"/></g></svg>
+              <div class="sym-label">Connector</div>
+            </button>
+            <button class="sym item" data-kind="ground" draggable="true" title="Ground">
+              <svg class="sym-icon" viewBox="0 0 80 40"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M40 8v12"/><path d="M28 20h24M32 24h16M36 28h8"/></g></svg>
+              <div class="sym-label">GND</div>
+            </button>
+            <button class="sym item" data-kind="vcc" draggable="true" title="VCC">
+              <svg class="sym-icon" viewBox="0 0 80 40"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M40 32V12"/><path d="M40 12l-6 6M40 12l6 6"/></g></svg>
+              <div class="sym-label">VCC</div>
+            </button>
+            <button class="sym item" data-kind="5v" draggable="true" title="5V">
+              <svg class="sym-icon" viewBox="0 0 80 40"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M40 32V12"/><path d="M40 12l-6 6M40 12l6 6"/></g></svg>
+              <div class="sym-label">5V</div>
+            </button>
+            <button class="sym item" data-kind="3v3" draggable="true" title="3.3V">
+              <svg class="sym-icon" viewBox="0 0 80 40"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M40 32V12"/><path d="M40 12l-6 6M40 12l6 6"/></g></svg>
+              <div class="sym-label">3.3V</div>
+            </button>
+          </div>
+          <div class="muted">Drag a symbol onto the canvas to place it. Click to select; drag to move; press Q/E to rotate ±15°.</div>
         </div>
       </div>
-      <div class="panel">
-        <h3>Properties</h3>
-        <div class="muted">Select annotations to edit properties (coming soon).</div>
+
+      <div class="tab-panel" data-tab="text" id="tab-text">
+        <div class="panel">
+          <h3>Text Enhance</h3>
+        <div class="row"><button id="cv-text" class="btn">Text Enhance</button></div>
+        <div class="row"><button id="cv-text2" class="btn">Text Enhance (Sauvola)</button></div>
+          <div class="row key-val"><div class="key">Text strength</div><div class="value"><input id="cv-text-strength" type="range" min="0" max="3" step="1" value="2"></div></div>
+          <div class="row key-val"><div class="key">Thin text</div><div class="value"><input id="cv-text-thin" type="range" min="0" max="2" step="1" value="0"></div></div>
+          <div class="row key-val"><div class="key">Thicken</div><div class="value"><input id="cv-text-thicken" type="range" min="0" max="2" step="1" value="1"></div></div>
+          <div class="row"><label><input id="cv-text-upscale" type="checkbox" checked> Upscale x2 for text</label></div>
+          <div class="row"><label><input id="cv-bg-eq" type="checkbox"> Equalize background in Text Enhance</label></div>
+          <div class="row"><button id="cv-bgnorm" class="btn">Background Equalize</button></div>
+          <div class="row"><button id="cv-despeckle" class="btn">Despeckle</button></div>
+          <div class="row key-val"><div class="key">Max speck</div><div class="value"><input id="cv-speck-size" type="range" min="5" max="300" step="5" value="40"></div></div>
+          <div class="row"><button id="cv-text-auto" class="btn">Auto Text Cleanup</button></div>
+          <div class="row"><button id="cv-ocr-replace" class="btn">OCR Replace Text</button></div>
+          <div class="row"><label><input id="cv-ocr-erase" type="checkbox" checked> Erase original text</label></div>
+          <div class="row key-val"><div class="key">Min conf</div><div class="value"><input id="cv-ocr-conf" type="range" min="40" max="95" step="5" value="65"></div></div>
+        </div>
+      </div>
+
+      <div class="tab-panel" data-tab="layers" id="tab-layers">
+        <div class="panel">
+          <h3>Layers</h3>
+          <div class="layers">
+            <div id="layers-list"></div>
+            <div class="layer-actions">
+              <button id="layer-add" class="btn">+ Add</button>
+              <button id="layer-rename" class="btn">Rename</button>
+              <button id="layer-delete" class="btn warn">Delete</button>
+            </div>
+            <div class="row key-val"><div class="key">Active</div><div class="value"><select id="layer-active"></select></div></div>
+          </div>
+        </div>
+        <div class="panel hidden" id="props">
+          <h3>Properties</h3>
+          <div id="props-panel" class="props-panel muted">Moved: Use Symbols → Text Properties.</div>
+        </div>
       </div>
     </aside>
 
     <div class="status">
       <div class="pill">Zoom: <span id="status-zoom">100%</span></div>
       <div class="pill">Page: <span id="status-page">0/0</span></div>
+      <div class="pill" id="status-task">Ready</div>
       <div class="coords">Cursor: <span id="status-pos">x:0 y:0</span></div>
     </div>
   </div>
+
+  <!-- Splitters -->
+  <div id="split-left" class="splitter v" style="left: var(--left-w)"></div>
+  <div id="split-right" class="splitter v" style="right: var(--right-w)"></div>
+  <div id="split-debug" class="splitter h" style="bottom: var(--debug-h)"></div>
 
   <div class="help" role="dialog" aria-modal="false">
     <h3>Shortcuts & Tips</h3>
@@ -132,7 +268,12 @@
     <textarea id="debug-memo" spellcheck="false" wrap="off" placeholder="Debug output will appear here..."></textarea>
   </div>
 
-  <script defer src="app.js?v=3" onerror="(function(){try{var t=document.getElementById('toast'); if(t){t.className='toast show error'; t.textContent='Failed to load app.js';} var d=document.getElementById('debug-panel'); d && d.classList.remove('hidden');}catch(e){}})()"></script>
+  <!-- PDF.js for PDF import -->
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js" crossorigin="anonymous"></script>
+  <script>
+    try{ if(window['pdfjsLib']){ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js'; } }catch(_){ }
+  </script>
+  <script defer src="app.js?v=11" onerror="(function(){try{var t=document.getElementById('toast'); if(t){t.className='toast show error'; t.textContent='Failed to load app.js';} var d=document.getElementById('debug-panel'); d && d.classList.remove('hidden');}catch(e){}})()"></script>
   <script>
     if('serviceWorker' in navigator && !location.search.includes('nosw')){
       window.addEventListener('load', ()=>{

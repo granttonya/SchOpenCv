@@ -1,0 +1,101 @@
+﻿1 `t:root{ 
+2 `t  --bg:#0f1115;--panel:#141824;--panel-2:#191f2e;--text:#e8ecf1;--muted:#9aa3b2;--accent:#4cc2ff;--accent-2:#6df2bf;--danger:#ff6b6b;--warning:#ffd166;--ok:#7dd56f; 
+3 `t  --border:#21293a;--shadow:rgba(0,0,0,.35) 
+4 `t} 
+5 `t*{box-sizing:border-box} 
+6 `thtml,body{height:100%} 
+7 `tbody{margin:0;background:var(--bg);color:var(--text);font:13px/1.4 ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial} 
+8 `t 
+9 `t/* Layout */ 
+10 `t.app{display:grid;grid-template-rows:auto 1fr auto;grid-template-columns:260px 1fr 300px;grid-template-areas: 
+11 `t  'toolbar toolbar toolbar' 
+12 `t  'left    main    right' 
+13 `t  'status  status  status';height:100vh;overflow:hidden} 
+14 `t.toolbar{grid-area:toolbar;background:linear-gradient(180deg,var(--panel),#101426);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;padding:8px 10px;box-shadow:0 2px 10px var(--shadow);position:relative} 
+15 `t.left{grid-area:left;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;min-width:220px;overflow:auto;min-height:0} 
+16 `t.main{grid-area:main;position:relative;background:#0b0e17} 
+17 `t.right{grid-area:right;background:var(--panel);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:auto;min-height:0} 
+18 `t.status{grid-area:status;background:var(--panel-2);border-top:1px solid var(--border);display:flex;align-items:center;gap:16px;padding:6px 10px;color:var(--muted)} 
+19 `t 
+20 `t/* Toolbar */ 
+21 `t.tool-group{display:flex;gap:6px;border-right:1px solid var(--border);padding-right:8px;margin-right:8px} 
+22 `tbutton, .btn{ 
+23 `t  background:linear-gradient(180deg,#1b2232,#13192a);color:var(--text);border:1px solid #1e2739;border-radius:6px;box-shadow:inset 0 1px 0 #2a354f,0 1px 0 rgba(255,255,255,.04); 
+24 `t  padding:6px 10px;display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none 
+25 `t} 
+26 `tbutton:hover{filter:brightness(1.05)} 
+27 `tbutton:active{transform:translateY(1px)} 
+28 `tbutton[aria-pressed="true"],button.active{outline:2px solid var(--accent);border-color:var(--accent)} 
+29 `t.btn.primary{background:linear-gradient(180deg,#1f6a9e,#164b70);border-color:#19557f} 
+30 `t.btn.warn{background:linear-gradient(180deg,#8b1f2b,#61151c);border-color:#7a1b26} 
+31 `t.sep{width:1px;height:24px;background:var(--border);margin:0 6px} 
+32 `t 
+33 `t/* Panels */ 
+34 `t.panel{padding:10px;border-bottom:1px solid var(--border)} 
+35 `t.panel h3{margin:0 0 8px 0;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em} 
+36 `t.panel .row{display:flex;align-items:center;gap:8px;margin:6px 0} 
+37 `t.panel input[type="range"]{width:100%} 
+38 `t.panel input[type="text"], .panel input[type="number"], .panel select{width:100%;background:#0f1424;border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px} 
+39 `t 
+40 `t/* Thumbnails */ 
+41 `t.thumbs{flex:1;overflow:auto;padding:8px;display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px} 
+42 `t.thumb{background:#0c111d;border:1px solid var(--border);border-radius:6px;overflow:hidden;cursor:pointer} 
+43 `t.thumb img{display:block;width:100%;height:96px;object-fit:contain;background:#0a0f19} 
+44 `t.thumb .meta{padding:6px;font-size:11px;color:var(--muted);display:flex;justify-content:space-between} 
+45 `t.thumb.active{outline:2px solid var(--accent)} 
+46 `t 
+47 `t/* Viewer */ 
+48 `t.canvas-wrap{position:absolute;inset:0;overflow:hidden} 
+49 `tcanvas{position:absolute;left:0;top:0} 
+50 `t.overlay{pointer-events:none} 
+51 `t.drop-overlay{position:absolute;inset:0;border:2px dashed var(--accent);border-radius:10px;background:rgba(76,194,255,.08);display:none;align-items:center;justify-content:center;color:var(--accent);font-size:16px} 
+52 `t.drop-overlay.show{display:flex} 
+53 `t.coords{margin-left:auto} 
+54 `t 
+55 `t/* Tool palette */ 
+56 `t.toolbox{display:flex;gap:6px} 
+57 `t.toolbox .tool{padding:6px 10px;border:1px solid var(--border);background:#121a2c;border-radius:6px;cursor:pointer} 
+58 `t.tool.active{outline:2px solid var(--accent)} 
+59 `t 
+60 `t/* Right Properties */ 
+61 `t.scroll{overflow:auto} 
+62 `t.section{padding:10px;border-bottom:1px solid var(--border)} 
+63 `t.section h4{margin:0 0 8px 0;font-size:13px} 
+64 `t.key-val{display:flex;gap:8px;align-items:center} 
+65 `t.key{width:80px;color:var(--muted)} 
+66 `t.value{flex:1} 
+67 `t 
+68 `t/* Layers UI */ 
+69 `t.layers{padding:6px 10px;display:flex;flex-direction:column;gap:6px} 
+70 `t.layer-row{display:flex;align-items:center;gap:8px;padding:6px;background:#0f1424;border:1px solid var(--border);border-radius:6px} 
+71 `t.layer-row .name{flex:1;cursor:text} 
+72 `t.layer-row.active{outline:2px solid var(--accent)} 
+73 `t.layer-actions{display:flex;gap:6px;margin-top:6px} 
+74 `t 
+75 `t/* Help */ 
+76 `t.help{position:fixed;right:16px;bottom:16px;background:#0f1626;border:1px solid var(--border);border-radius:8px;max-width:520px;box-shadow:0 8px 40px var(--shadow);padding:12px;display:none} 
+77 `t.help.show{display:block} 
+78 `t.help h3{margin:0 0 6px 0} 
+79 `t.kbd{background:#0a1222;border:1px solid var(--border);padding:1px 6px;border-radius:4px;margin:0 2px} 
+80 `t 
+81 `t/* Status bar */ 
+82 `t.status .pill{background:#0d1525;border:1px solid var(--border);border-radius:999px;padding:2px 8px;color:var(--muted)} 
+83 `t 
+84 `t/* Utility */ 
+85 `t.hidden{display:none} 
+86 `t.visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0} 
+87 `t.grow{flex:1} 
+88 `t.muted{color:var(--muted)} 
+89 `t 
+90 `t/* Toast */ 
+91 `t.toast{position:fixed;right:16px;top:16px;background:#0f1626;border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 30px var(--shadow);padding:10px 12px;display:none;z-index:50} 
+92 `t.toast.show{display:block} 
+93 `t.toast.error{border-color:var(--danger);color:#ffd7d7} 
+94 `t.toast.ok{border-color:var(--ok);color:#c7f5c1} 
+95 `t 
+96 `t/* Debug panel */ 
+97 `t.debug-panel{position:fixed;left:0;right:0;bottom:0;background:var(--panel-2);border-top:1px solid var(--border);box-shadow:0 -6px 18px var(--shadow);display:grid;grid-template-rows:auto 1fr;height:200px;z-index:1000} 
+98 `t.debug-panel.hidden{display:none} 
+99 `t.debug-head{display:flex;align-items:center;justify-content:space-between;padding:6px 10px;color:var(--muted)} 
+100 `t.debug-actions{display:flex;gap:6px} 
+101 `t#debug-memo{width:100%;height:100%;background:#0a0f19;color:var(--text);border:0;border-top:1px solid var(--border);padding:8px;font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:12px;line-height:1.3;resize:none} 
