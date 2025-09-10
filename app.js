@@ -2,6 +2,7 @@
 // Single-file module orchestrating UI, viewer, tools, and persistence.
 
 /*
+  High-level architecture
   - App: bootstraps UI and wires events
   - State: pages, annotations, layers, enhancements, scale calibration
   - Viewer: high-perf canvas with zoom/pan and overlay rendering
