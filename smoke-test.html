@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Schematic Studio — Smoke Test</title>
+  <style>
+    html,body{margin:0;padding:0;height:100%;background:#111;color:#eee;font-family:ui-sans-serif,system-ui,Segoe UI,Arial}
+    .wrap{display:flex;flex-direction:column;height:100%}
+    header{padding:12px 16px;border-bottom:1px solid #333;display:flex;gap:12px;align-items:center;background:#0d0d0d;position:sticky;top:0}
+    header h1{font-size:16px;margin:0;font-weight:600;letter-spacing:.2px}
+    header .spacer{flex:1}
+    button{background:#222;border:1px solid #444;color:#eee;padding:8px 12px;border-radius:8px;cursor:pointer}
+    button:disabled{opacity:.6;cursor:default}
+    main{display:grid;grid-template-columns:1.2fr .8fr;gap:0;height:calc(100% - 54px)}
+    iframe{width:100%;height:100%;border:0;border-right:1px solid #222;background:#000}
+    .side{padding:12px 16px;overflow:auto}
+    .log{border:1px solid #333;border-radius:8px;overflow:hidden}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    thead th{position:sticky;top:0;background:#0f0f0f;border-bottom:1px solid #333}
+    td,th{padding:8px;border-bottom:1px solid #222;vertical-align:top}
+    tr.pass td.status{color:#66d972} tr.fail td.status{color:#ff7878}
+    code{background:#000;padding:2px 4px;border-radius:4px;border:1px solid #333}
+    footer{padding:10px 16px;border-top:1px solid #222;color:#aaa}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Smoke Test</h1>
+    <div class="spacer"></div>
+    <button id="btn-run">Run</button>
+    <button id="btn-rerun">Re-run</button>
+    <button id="btn-json">Download JSON</button>
+  </header>
+  <main>
+    <iframe id="app" src="index.html"></iframe>
+    <div class="side">
+      <h2>Results</h2>
+      <div class="note">Tip: add <code>?auto=1</code> to this page URL to auto-run.</div>
+      <div class="log">
+        <table id="results">
+          <thead><tr><th>#</th><th>Step</th><th>Pass?</th><th>ms</th><th>Detail</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="note">Place this file beside <code>index.html</code> and open via <code>http://localhost/...</code> (not <code>file://</code>).</div>
+    </div>
+  </main>
+  <footer>Simulates import and CV actions; verifies canvas pixel changes and download hooks.</footer>
+</div>
+<script src="smoke-tests.js"></script>
+</body>
+</html>
